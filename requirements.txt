@@ -1,5 +1,7 @@
-streamlit>=1.27
-pandas>=2.0
-openpyxl>=3.1
-fpdf>=1.7
-matplotlib>=3.7
+streamlit
+pandas
+numpy
+matplotlib
+scikit-learn
+openai
+openpyxl

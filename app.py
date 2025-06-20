@@ -54,7 +54,7 @@ existing_log = cursor.fetchone()
 if existing_log:
     current_tb = existing_log[4]
     if abs(current_tb - tb_summa) > 1:
-        st.warning(f"⚠️ TB i loggen ({current_tb} kr) skiljer sig från affärssumman ({tb_summa} kr)")
+        st.warning(f"⚠️ TB i loggen ({current_tb:,.0f} kr) skiljer sig från affärssumman ({tb_summa:,.0f} kr)")
     if st.button("🔄 Synka TB från affärer"):
         samtal, tid_min, kommentar = existing_log[2], existing_log[3], existing_log[10]
         tb = tb_summa
@@ -140,12 +140,34 @@ st.header("📊 Dagslogg – Översikt")
 df = pd.read_sql_query("SELECT * FROM logg ORDER BY datum", conn)
 if not df.empty:
     df['datum'] = pd.to_datetime(df['datum'])
-    st.dataframe(df.drop(columns=['id']), use_container_width=True)
-    st.line_chart(df.set_index("datum")["snitt_min_per_samtal"])
+    df_viz = df.copy()
+    df_viz[['tb', 'tb_per_samtal', 'tb_per_timme', 'lon']] = df_viz[['tb', 'tb_per_samtal', 'tb_per_timme', 'lon']].applymap(lambda x: f"{x:,.0f} kr")
+    df_viz['snitt_min_per_samtal'] = df['snitt_min_per_samtal'].apply(lambda x: f"{x:.1f} min")
+
+    st.dataframe(df_viz.drop(columns=['id']), use_container_width=True)
+
+    st.line_chart(df.set_index("datum")["tb"])
+    st.line_chart(df.set_index("datum")["lon"])
+
+    # Excel-export
+    excel_buffer = io.BytesIO()
+    df.drop(columns=['id']).to_excel(excel_buffer, index=False, engine="openpyxl")
+    st.download_button(
+        label="📥 Ladda ner som Excel",
+        data=excel_buffer.getvalue(),
+        file_name="dagslogg.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ---------------------- AFFÄRER ----------------------
 
 st.header("📋 Affärer – Översikt")
 df_affar = pd.read_sql_query("SELECT * FROM affarer ORDER BY datum", conn)
 if not df_affar.empty:
     df_affar['datum'] = pd.to_datetime(df_affar['datum'])
-    st.dataframe(df_affar.drop(columns=['id']), use_container_width=True)
+    df_affar_viz = df_affar.copy()
+    df_affar_viz['minuter_till_stangning'] = df_affar_viz['minuter_till_stangning'].apply(lambda x: f"{x:.1f} min")
+    df_affar_viz['tb'] = df_affar_viz['tb'].apply(lambda x: f"{x:,.0f} kr")
+
+    st.dataframe(df_affar_viz.drop(columns=['id']), use_container_width=True)
     st.line_chart(df_affar.set_index("datum")["minuter_till_stangning"])

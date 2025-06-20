@@ -142,8 +142,8 @@ with tab3:
     df['datum']=pd.to_datetime(df['datum'])
     df['vecka']=df['datum'].dt.isocalendar().week
     df['manad']=df['datum'].dt.to_period('M')
-    weekly=df.groupby('vecka').sum()[['tb','samtal','lon']]
-    monthly=df.groupby('manad').sum()[['tb','samtal','lon']]
+    weekly = df.groupby('vecka')[['tb','samtal','lon']].sum()
+    monthly = df.groupby('manad')[['tb','samtal','lon']].sum()
     st.dataframe(weekly)
     st.line_chart(weekly[['tb','lon']])
     st.dataframe(monthly)

@@ -3,10 +3,9 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import io
-from fpdf import FPDF
 import matplotlib.pyplot as plt
-import smtplib
-from email.message import EmailMessage
+import numpy as np
+import random
 
 # ----------- DATABASE -----------
 conn = sqlite3.connect('forsaljning.db', check_same_thread=False)
@@ -46,10 +45,25 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# ----------- APP UI -----------
+# ----------- MOTIVATIONS-TIPS/CITAT -----------
+motivations = [
+    "🔥 \"Disciplin slår motivation – varje dag!\"",
+    "🚀 \"Varje samtal är en ny chans till rekord.\"",
+    "💪 \"Fokusera på process, inte bara resultat.\"",
+    "🏆 \"Du tävlar bara mot dig själv – slå gårdagens du.\"",
+    "🦁 \"Gör det som känns svårt först, så vinner du senare.\"",
+    "🌱 \"Varje liten förbättring gör stor skillnad över tid.\"",
+    "🎯 \"Tydligt mål? Dubbel chans till träff!\"",
+    "👊 \"Allt du gör idag – bygger morgondagens framgång.\""
+]
+
 st.set_page_config(page_title="Säljlogg", layout="wide")
 st.markdown("<h1 style='color:#083759;'>📈 Försäljningslogg & Affärer</h1>", unsafe_allow_html=True)
 
+# ----------- DAGLIG MOTIVATION ----------
+st.info(random.choice(motivations))
+
+# ----------- UI: LOGG, MÅL, AFFÄR -----------
 col1, col2, col3 = st.columns([1.5, 1, 1])
 with col1:
     st.subheader("🗓️ Dagslogg")
@@ -72,6 +86,21 @@ with col1:
         ''', (datum.strftime("%Y-%m-%d"), samtal, tid_min, tb, tb_per_samtal, tb_per_timme, snitt_min_per_samtal, lon, kommentar))
         conn.commit()
         st.success("Dagslogg sparad!")
+        # Automatisk feedback direkt
+        goal_row = cursor.execute("SELECT * FROM mal WHERE datum = ?", (datum.strftime('%Y-%m-%d'),)).fetchone()
+        if goal_row:
+            tb_pct = int(100*tb/(goal_row[1] or 1))
+            samtal_pct = int(100*samtal/(goal_row[2] or 1))
+            lon_pct = int(100*lon/(goal_row[3] or 1))
+            st.markdown("---")
+            if tb_pct>=100 and samtal_pct>=100 and lon_pct>=100:
+                st.success("🔥 Fullträff! Alla mål uppfyllda idag!")
+            else:
+                feedback = []
+                if tb_pct<100: feedback.append("TB under mål")
+                if samtal_pct<100: feedback.append("Samtal under mål")
+                if lon_pct<100: feedback.append("Lön under mål")
+                st.warning(" ".join(feedback) + " – du är nära, nästa gång tar du det!")
 
 with col2:
     st.subheader("🎯 Sätt mål")
@@ -85,6 +114,21 @@ with col2:
         ''', (datum.strftime("%Y-%m-%d"), tb_mal, samtal_mal, lon_mal))
         conn.commit()
         st.success("Mål sparade!")
+        # Direkt feedback om mål för idag
+        last_log = cursor.execute("SELECT * FROM logg WHERE datum = ?", (datum.strftime('%Y-%m-%d'),)).fetchone()
+        if last_log:
+            tb_pct = int(100*(last_log[4]/(tb_mal or 1)))
+            samtal_pct = int(100*(last_log[2]/(samtal_mal or 1)))
+            lon_pct = int(100*(last_log[8]/(lon_mal or 1)))
+            st.markdown("---")
+            if tb_pct>=100 and samtal_pct>=100 and lon_pct>=100:
+                st.success("🔥 Fullträff! Alla mål för idag redan uppfyllda!")
+            else:
+                feedback = []
+                if tb_pct<100: feedback.append("TB under mål")
+                if samtal_pct<100: feedback.append("Samtal under mål")
+                if lon_pct<100: feedback.append("Lön under mål")
+                st.warning(" ".join(feedback))
 
 with col3:
     st.subheader("📤 Lägg till affär")
@@ -105,40 +149,36 @@ with col3:
         st.success("Affär sparad!")
 
 st.divider()
-tab1, tab2, tab3 = st.tabs(["📊 Dagslogg & Analys", "📋 Affärer", "🏆 Vecko/Månadsanalys"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Dagslogg & Analys",
+    "📋 Affärer",
+    "🏆 Vecko/Månadsanalys",
+    "🎯 Målhistorik, Analys & Rapport"
+])
 
-# --- DAGSVY ---
+# --- DAGSVY & TOPPLISTA ---
 with tab1:
     df_logg = pd.read_sql_query("SELECT * FROM logg ORDER BY datum", conn)
     if not df_logg.empty:
         df_logg['datum'] = pd.to_datetime(df_logg['datum'])
         st.subheader("Logg (alla dagar)")
         st.dataframe(df_logg.drop(columns=['id']), use_container_width=True)
-
         # Grafer: TB och lön över tid
         fig, ax = plt.subplots()
         df_logg.plot(x="datum", y=["tb", "lon"], ax=ax, marker='o')
         ax.set_ylabel("Belopp (kr)")
         ax.grid(True)
         st.pyplot(fig, use_container_width=True)
-
-        # Dagens målstatus
-        goal_row = cursor.execute("SELECT * FROM mal WHERE datum = ?", (datetime.today().strftime('%Y-%m-%d'),)).fetchone()
-        if goal_row:
-            st.markdown(f"<b>TB-mål:</b> {goal_row[1]} kr &nbsp; <b>Samtalsmål:</b> {goal_row[2]} &nbsp; <b>Lönemål:</b> {goal_row[3]} kr", unsafe_allow_html=True)
-            last_log = df_logg[df_logg['datum'] == datetime.today().strftime('%Y-%m-%d')]
-            if not last_log.empty:
-                tb_res, samtal_res, lon_res = last_log['tb'].values[0], last_log['samtal'].values[0], last_log['lon'].values[0]
-                st.markdown(
-                    f"<b>Dagens resultat:</b> TB: {'✅' if tb_res >= goal_row[1] else '❌'} {int(tb_res)} / {goal_row[1]}, "
-                    f"Samtal: {'✅' if samtal_res >= goal_row[2] else '❌'} {int(samtal_res)} / {goal_row[2]}, "
-                    f"Lön: {'✅' if lon_res >= goal_row[3] else '❌'} {int(lon_res)} / {goal_row[3]}",
-                    unsafe_allow_html=True
-                )
-        # Export
+        # Rekord/topplista
+        st.markdown("#### 🏅 Ditt rekord:")
+        top = df_logg.loc[df_logg['tb'].idxmax()]
+        st.write(f"TB-rekord: {int(top['tb'])} kr ({top['datum'].date()})")
+        st.write(f"Fler samtal än någonsin: {int(df_logg['samtal'].max())}")
+        st.write(f"Högsta lönedag: {int(df_logg['lon'].max())} kr")
+        # Ladda ner all historik
         excel_buffer = io.BytesIO()
         df_logg.drop(columns=['id']).to_excel(excel_buffer, index=False, engine="openpyxl")
-        st.download_button("Ladda ner logg som Excel", data=excel_buffer.getvalue(), file_name="daglogg.xlsx")
+        st.download_button("Ladda ner all logg som Excel", data=excel_buffer.getvalue(), file_name="daglogg_historik.xlsx")
 
 # --- AFFÄRER ---
 with tab2:
@@ -150,41 +190,24 @@ with tab2:
     )
     if not df_affar.empty:
         st.dataframe(df_affar.drop(columns=['id']), use_container_width=True)
-        # Export Excel & PDF
         excel_buffer_affar = io.BytesIO()
         df_affar.drop(columns=['id']).to_excel(excel_buffer_affar, index=False, engine="openpyxl")
         st.download_button("Ladda ner affärer som Excel", data=excel_buffer_affar.getvalue(), file_name="affarer.xlsx")
-        if st.button("Exportera affärer till PDF"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            pdf.cell(200, 10, txt="Affärsrapport", ln=True, align='C')
-            pdf.ln(10)
-            for _, row in df_affar.iterrows():
-                rad = f"{row['datum']} | {row['affar_namn']} | TB: {row['tb']} kr | Tid: {row['minuter_till_stangning']} min"
-                pdf.cell(0, 10, rad, ln=True)
-            pdf_buffer = io.BytesIO()
-            pdf.output(pdf_buffer)
-            pdf_buffer.seek(0)
-            st.download_button(label="Ladda ner affärer som PDF", data=pdf_buffer, file_name="affarer.pdf", mime="application/pdf")
     else:
         st.info("Inga affärer i detta intervall.")
 
-# --- VECKO/MÅNADSVY & GAMIFICATION ---
+# --- VECKO/MÅNADSVY, GAMIFICATION & PROGNOS ---
 with tab3:
     st.subheader("Vecko-/Månadsanalys & Nivåer")
     if not df_logg.empty:
         df_logg['vecka'] = df_logg['datum'].dt.isocalendar().week
         df_logg['manad'] = df_logg['datum'].dt.to_period('M')
-        # Veckosammanställning
         weekly = df_logg.groupby('vecka').agg(tb=('tb','sum'), samtal=('samtal','sum'), lon=('lon','sum')).reset_index()
         st.dataframe(weekly, use_container_width=True)
         st.line_chart(weekly.set_index('vecka')[['tb','lon']])
-        # Månadssammanställning
         monthly = df_logg.groupby('manad').agg(tb=('tb','sum'), samtal=('samtal','sum'), lon=('lon','sum')).reset_index()
         st.dataframe(monthly, use_container_width=True)
         st.bar_chart(monthly.set_index('manad')[['tb','lon']])
-        # Gamification / nivåer
         dagar = df_logg['datum'].nunique()
         tot_tb = df_logg['tb'].sum()
         tb_per_dag = tot_tb / dagar if dagar else 0
@@ -199,55 +222,75 @@ with tab3:
         else:
             niva = "📈 Rookie in Training"
         st.markdown(f"**Nivå:** <span style='color:#1976d2;font-weight:bold;'>{niva}</span> &nbsp; (Snitt TB/dag: <b>{int(tb_per_dag)}</b> kr)", unsafe_allow_html=True)
-        # Trendanalys
         if len(weekly) >= 2:
             diff = weekly['tb'].iloc[-1] - weekly['tb'].iloc[-2]
             trend = "📈 Uppåt!" if diff > 0 else "📉 Neråt!" if diff < 0 else "➖ Samma nivå"
             st.info(f"Senaste veckotrend: {trend} ({int(diff)} kr)")
+        # Prognos till månadsslut
+        this_month = df_logg[df_logg['datum'].dt.to_period('M') == pd.to_datetime(datetime.today()).to_period('M')]
+        dagar_gjorda = this_month['datum'].nunique()
+        dagar_tot = pd.Period(datetime.today(), 'M').days_in_month
+        if dagar_gjorda:
+            tb_per_dag = this_month['tb'].sum() / dagar_gjorda
+            prog_tb = int(tb_per_dag * dagar_tot)
+            st.success(f"🔮 Prognos: Om du håller snittet når du **{prog_tb} kr** TB denna månad!")
 
-# --- MAILUTSKICK AV RAPPORT ---
-st.divider()
-st.header("📧 Skicka rapport som e-post")
-recipient = st.text_input("Mottagarens e-post")
-smtp_user = st.text_input("Din Gmail-adress", type="default")
-smtp_pass = st.text_input("App-lösenord (Gmail)", type="password")
-if st.button("📤 Skicka rapport (Excel & PDF)"):
-    if not smtp_user or not smtp_pass or not recipient:
-        st.error("Fyll i alla fält.")
-    else:
-        try:
-            msg = EmailMessage()
-            msg['Subject'] = "Försäljningsrapport"
-            msg['From'] = smtp_user
-            msg['To'] = recipient
-            msg.set_content("Här är försäljningsrapporten som PDF och Excel.")
+# --- MÅLHISTORIK, ANALYS, SIMULERING & RAPPORT/EXPORT ---
+with tab4:
+    st.header("🎯 Målhistorik, Analys & Vad-händer-om")
 
-            # Excel
-            df_send = df_logg.drop(columns=['id']) if not df_logg.empty else pd.DataFrame()
-            excel_buf = io.BytesIO()
-            df_send.to_excel(excel_buf, index=False, engine="openpyxl")
-            msg.add_attachment(excel_buf.getvalue(), maintype='application',
-                              subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename="daglogg.xlsx")
-            # PDF
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            pdf.cell(200, 10, txt="Försäljningsrapport", ln=True, align='C')
-            pdf.ln(10)
-            if not df_send.empty:
-                for _, row in df_send.iterrows():
-                    rad = f"{row['datum'].strftime('%Y-%m-%d')} - TB: {row['tb']} kr, Samtal: {row['samtal']}, Lön: {row['lon']} kr"
-                    pdf.cell(0, 10, rad, ln=True)
-            else:
-                pdf.cell(0, 10, "Ingen data.", ln=True)
-            pdf_buf = io.BytesIO()
-            pdf.output(pdf_buf)
-            pdf_buf.seek(0)
-            msg.add_attachment(pdf_buf.getvalue(), maintype='application', subtype='pdf', filename="forsaljningsrapport.pdf")
+    # Ladda mål och loggar
+    df_mal = pd.read_sql_query("SELECT * FROM mal ORDER BY datum DESC", conn)
+    df_logg = pd.read_sql_query("SELECT * FROM logg ORDER BY datum DESC", conn)
+    if not df_mal.empty and not df_logg.empty:
+        df_mal['datum'] = pd.to_datetime(df_mal['datum'])
+        df_logg['datum'] = pd.to_datetime(df_logg['datum'])
 
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-                smtp.login(smtp_user, smtp_pass)
-                smtp.send_message(msg)
-            st.success("E-post skickad!")
-        except Exception as e:
-            st.error(f"Fel vid utskick: {e}")
+        st.dataframe(df_mal, use_container_width=True)
+
+        dagar = list(df_mal['datum'].dt.strftime("%Y-%m-%d"))
+        valdag = st.selectbox("Välj dag för analys/simulering", dagar)
+        mal_row = df_mal[df_mal['datum'] == pd.to_datetime(valdag)].iloc[0]
+        logg_row = df_logg[df_logg['datum'] == pd.to_datetime(valdag)].squeeze()
+
+        st.subheader(f"Detaljerad analys {valdag}")
+
+        tb_pct = round(100 * logg_row['tb'] / mal_row['tb_mal']) if mal_row['tb_mal'] else 0
+        samtal_pct = round(100 * logg_row['samtal'] / mal_row['samtal_mal']) if mal_row['samtal_mal'] else 0
+        lon_pct = round(100 * logg_row['lon'] / mal_row['lon_mal']) if mal_row['lon_mal'] else 0
+
+        def emoji(pct):
+            if pct >= 120: return "💚"
+            elif pct >= 100: return "🟩"
+            elif pct >= 80: return "🟨"
+            else: return "🟥"
+
+        st.write(f"TB: {logg_row['tb']} / {mal_row['tb_mal']} kr  ({tb_pct}%) {emoji(tb_pct)}")
+        st.write(f"Samtal: {logg_row['samtal']} / {mal_row['samtal_mal']}  ({samtal_pct}%) {emoji(samtal_pct)}")
+        st.write(f"Lön: {int(logg_row['lon'])} / {mal_row['lon_mal']} kr  ({lon_pct}%) {emoji(lon_pct)}")
+        st.write(f"Kommentar: {logg_row['kommentar']}")
+
+        st.markdown("---")
+        feedback = []
+        if tb_pct >= 100 and samtal_pct >= 100 and lon_pct >= 100:
+            feedback.append("🌟 **Fullträff! Alla mål uppnådda – grym prestation!**")
+        else:
+            if tb_pct < 100:
+                feedback.append(f"TB under mål – fundera på hur du kan få upp snittaffären eller antalet större affärer.")
+            if samtal_pct < 100:
+                feedback.append(f"Samtal under mål – går det att öka samtalstakten eller kvaliteten?")
+            if lon_pct < 100:
+                feedback.append(f"Lön under mål – hänger ofta ihop med TB, men håll koll på konvertering/fördelning mellan affärer.")
+        st.write('\n'.join(feedback))
+
+        st.markdown("---")
+        senaste7 = df_mal.head(7)
+        if not senaste7.empty:
+            st.subheader("📊 7-dagars trend")
+            tb_succ = (df_logg[df_logg['datum'].isin(senaste7['datum'])]['tb'].sum() /
+                       (senaste7['tb_mal'].sum() or 1)) * 100
+            samtal_succ = (df_logg[df_logg['datum'].isin(senaste7['datum'])]['samtal'].sum() /
+                           (senaste7['samtal_mal'].sum() or 1)) * 100
+            lon_succ = (df_logg[df_logg['datum'].isin(senaste7['datum'])]['lon'].sum() /
+                        (senaste7['lon_mal'].sum() or 1)) * 100
+            st.write(f"TB snittmåluppfyl

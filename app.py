@@ -41,7 +41,8 @@ for table_sql in [
         tb_mal INTEGER,
         samtal_mal INTEGER,
         lon_mal INTEGER
-    )''']:
+    )'''
+]:
     cursor.execute(table_sql)
 conn.commit()
 
@@ -75,9 +76,11 @@ with col1:
         lon = tb*0.45
         cursor.execute('''
             INSERT OR REPLACE INTO logg
-            (datum,samtal,tid_min,tb,tb_per_samtal,tb_per_timme,snitt_min_per_samtal,lon,kommentar)
+            (datum,samtal,tid_min,tb,tb_per_samtal,tb_per_timme,
+             snitt_min_per_samtal,lon,kommentar)
             VALUES(?,?,?,?,?,?,?,?,?)
-        ''', (datum.strftime('%Y-%m-%d'),samtal,tid_min,tb,tb_ps,tb_pt,snitt,lon,kommentar))
+        ''', (datum.strftime('%Y-%m-%d'),samtal,tid_min,tb,
+              tb_ps,tb_pt,snitt,lon,kommentar))
         conn.commit()
         st.success('Dagslogg sparad!')
 
@@ -91,7 +94,7 @@ with col2:
         cursor.execute('''
             INSERT OR REPLACE INTO mal (datum,tb_mal,samtal_mal,lon_mal)
             VALUES(?,?,?,?)
-        ''',(datum.strftime('%Y-%m-%d'),g_tb,g_samtal,g_lon))
+        ''', (datum.strftime('%Y-%m-%d'),g_tb,g_samtal,g_lon))
         conn.commit()
         st.success('Mål sparade!')
 
@@ -103,17 +106,24 @@ with col3:
     closed = st.time_input('Stängd tid')
     tb_a = st.number_input('TB affär',0.0,step=100.0)
     if st.button('📌 Spara affär'):
-        diff = (datetime.combine(datum,closed)-datetime.combine(datum,sent)).seconds/60
+        diff = (datetime.combine(datum,closed)
+                - datetime.combine(datum,sent)).seconds/60
         cursor.execute('''
-            INSERT INTO affarer (datum,affar_namn,skickad_tid,stangd_tid,minuter_till_stangning,tb)
+            INSERT INTO affarer
+            (datum,affar_namn,skickad_tid,stangd_tid,minuter_till_stangning,tb)
             VALUES(?,?,?,?,?,?)
-        ''',(datum.strftime('%Y-%m-%d'),name,sent.strftime('%H:%M'),closed.strftime('%H:%M'),diff,tb_a))
+        ''', (datum.strftime('%Y-%m-%d'),name,
+              sent.strftime('%H:%M'),closed.strftime('%H:%M'),
+              diff,tb_a))
         conn.commit()
         st.success('Affär sparad!')
 
 st.divider()
+
 # Tabs
-tab1,tab2,tab3,tab4 = st.tabs(['📊 Dag','📋 Affärer','🏆 Analys','🎯 Målhistorik'])
+tab1,tab2,tab3,tab4 = st.tabs(
+    ['📊 Dag','📋 Affärer','🏆 Analys','🎯 Målhistorik']
+)
 
 # Tab1: Day log
 with tab1:
@@ -128,8 +138,8 @@ with tab1:
 
 # Tab2: Business
 with tab2:
-    start=st.date_input('Från',datetime.today()-timedelta(days=30),key='s')
-    end=st.date_input('Till',datetime.today(),key='e')
+    start=st.date_input('Affärer från',datetime.today()-timedelta(days=30),key='s')
+    end=st.date_input('Affärer till',datetime.today(),key='e')
     df2=pd.read_sql_query(
         'SELECT * FROM affarer WHERE datum BETWEEN ? AND ? ORDER BY datum',
         conn,params=(start.strftime('%Y-%m-%d'),end.strftime('%Y-%m-%d'))
@@ -138,16 +148,17 @@ with tab2:
 
 # Tab3: Analysis
 with tab3:
-    df=pd.read_sql_query('SELECT * FROM logg',conn)
-    df['datum']=pd.to_datetime(df['datum'])
-    df['vecka']=df['datum'].dt.isocalendar().week
-    df['manad']=df['datum'].dt.to_period('M')
-    weekly=df.groupby('vecka').sum()[['tb','samtal','lon']]
-    monthly=df.groupby('manad').sum()[['tb','samtal','lon']]
-    weekly = df.groupby('vecka')[['tb','samtal','lon']].sum()
-    monthly = df.groupby('manad')[['tb','samtal','lon']].sum()
+    df3=pd.read_sql_query('SELECT * FROM logg',conn)
+    df3['datum']=pd.to_datetime(df3['datum'])
+    df3['vecka']=df3['datum'].dt.isocalendar().week
+    df3['manad']=df3['datum'].dt.to_period('M')
+    # Fix: select only numeric columns for sum
+    weekly = df3.groupby('vecka')[['tb','samtal','lon']].sum()
+    monthly = df3.groupby('manad')[['tb','samtal','lon']].sum()
+    st.subheader("Veckosammanställning")
     st.dataframe(weekly)
     st.line_chart(weekly[['tb','lon']])
+    st.subheader("Månads­sammanställning")
     st.dataframe(monthly)
     st.bar_chart(monthly[['tb','lon']])
 
@@ -158,10 +169,10 @@ with tab4:
     if not dfg.empty and not dfl.empty:
         dfg['datum']=pd.to_datetime(dfg['datum'])
         dfl['datum']=pd.to_datetime(dfl['datum'])
-        st.dataframe(dfg)
+        st.dataframe(dfg,use_container_width=True)
         day=st.selectbox('Välj dag',dfg['datum'].dt.strftime('%Y-%m-%d'))
-        gr=dfg[dfg['datum']==day].iloc[0]
-        lr=dfl[dfl['datum']==day].iloc[0]
+        gr=dfg[dfg['datum']==pd.to_datetime(day)].iloc[0]
+        lr=dfl[dfl['datum']==pd.to_datetime(day)].iloc[0]
         pct_tb=lr['tb']/gr['tb_mal']*100 if gr['tb_mal'] else 0
         pct_s=lr['samtal']/gr['samtal_mal']*100 if gr['samtal_mal'] else 0
         pct_l=lr['lon']/gr['lon_mal']*100 if gr['lon_mal'] else 0
@@ -178,14 +189,20 @@ with tab4:
         st.write(f"Sim: {ns} samtal, {nts:.0f} snitt, TB={nt:.0f}, Lön={nl:.0f}")
         # Heatmap
         sr=np.arange(max(1,int(lr['samtal']*0.7)),int(lr['samtal']*1.5)+1)
-        tr=np.linspace((lr['tb']/lr['samtal'] if lr['samtal'] else 0)*0.8,(lr['tb']/lr['samtal']if lr['samtal'] else 0)*1.3,10)
+        tr=np.linspace((lr['tb']/lr['samtal'] if lr['samtal'] else 0)*0.8,
+                       (lr['tb']/lr['samtal'] if lr['samtal'] else 0)*1.3,10)
         mat=np.outer(sr,tr)
         fig,ax=plt.subplots()
-        c=ax.imshow(mat,origin='lower',aspect='auto',extent=[tr[0],tr[-1],sr[0],sr[-1]])
+        c=ax.imshow(mat,origin='lower',aspect='auto',
+                    extent=[tr[0],tr[-1],sr[0],sr[-1]])
         fig.colorbar(c,ax=ax,label='TB')
         st.pyplot(fig)
 
 # Excel export of full log
 buf=io.BytesIO()
 pd.read_sql_query('SELECT * FROM logg',conn).to_excel(buf,index=False)
-st.download_button('📥 Ladda ner Excel','buf.getvalue()',file_name='logg.xlsx')
+st.download_button(
+    '📥 Ladda ner logg.xlsx',
+    data=buf.getvalue(),
+    file_name='logg.xlsx'
+)

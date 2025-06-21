@@ -3,5 +3,5 @@ pandas
 numpy
 matplotlib
 scikit-learn
-openai
+openai>=1.0.0
 openpyxl

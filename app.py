@@ -9,7 +9,7 @@ import random
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-import openai
+from openai import OpenAI
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="📈 Försäljningslogg & Affärer", layout="wide")
@@ -17,7 +17,6 @@ st.set_page_config(page_title="📈 Försäljningslogg & Affärer", layout="wide
 # --- DATABASE SETUP ---
 conn = sqlite3.connect('forsaljning.db', check_same_thread=False)
 cursor = conn.cursor()
-# Log table with energy/humor
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS logg (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +33,6 @@ cursor.execute('''
         humor INTEGER
     )
 ''')
-# Affärer table
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS affarer (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +44,6 @@ cursor.execute('''
         tb REAL
     )
 ''')
-# Mål table for SMART goals
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS mal (
         datum TEXT PRIMARY KEY,
@@ -60,8 +57,8 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# --- OPENAI KEY ---
-openai.api_key = st.secrets.get("OPENAI_KEY", "")
+# --- OPENAI CLIENT SETUP ---
+openai_client = OpenAI(api_key=st.secrets.get("OPENAI_KEY", ""))
 
 # --- MOTIVATION MESSAGE ---
 msgs = [
@@ -146,7 +143,8 @@ with col2:
     real = st.text_input('Realistiskt mål')
     tids = st.text_input('Tidsbundet (YYYY-MM-DD)')
     if st.button('💾 Spara mål'):
-        cursor.execute('''INSERT OR REPLACE INTO mal
+        cursor.execute('''
+            INSERT OR REPLACE INTO mal
             (datum,tb_mal,samtal_mal,lon_mal,specifikt,realistiskt,tidsbundet)
             VALUES(?,?,?,?,?,?,?)''',(
             datum.strftime('%Y-%m-%d'),g_tb,g_samtal,g_lon,spec,real,tids
@@ -169,7 +167,8 @@ with col3:
     tb_a = st.number_input('TB affär',0.0,step=100.0)
     if st.button('📌 Spara affär'):
         diff = (datetime.combine(datum,closed)-datetime.combine(datum,sent)).seconds/60
-        cursor.execute('''INSERT INTO affarer
+        cursor.execute('''
+            INSERT INTO affarer
             (datum,affar_namn,skickad_tid,stangd_tid,minuter_till_stangning,tb)
             VALUES(?,?,?,?,?,?)''',(
             datum.strftime('%Y-%m-%d'),aff_n,sent.strftime('%H:%M'),
@@ -224,9 +223,11 @@ with tab3:
         tot_tb = weekly['tb'].iloc[-1]
         days = df3[df3['vecka']==week_num]['datum'].nunique()
         prompt = f"Veckorapport: vecka {week_num}, totalt TB {tot_tb:.0f} kr över {days} dagar. Ge en peppande sammanfattning på svenska."
-        if openai.api_key:
-            resp = openai.ChatCompletion.create(model="gpt-4o-mini",
-                messages=[{"role":"user","content":prompt}])
+        if openai_client.api_key:
+            resp = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role":"user","content":prompt}]
+            )
             st.markdown(resp.choices[0].message.content)
         else:
             st.info('Ange OPENAI_KEY i secrets för GPT-summering')
@@ -242,7 +243,6 @@ with tab4:
         lr = pd.read_sql_query(f"SELECT * FROM logg WHERE datum='{day}'",conn).iloc[0]
         pct = lr['tb']/gr['tb_mal']*100 if gr['tb_mal'] else 0
         st.write(f"Måluppfyllelse TB: {pct:.0f}%")
-        # Heatmap for simulation
         calls = lr['samtal']; tb_avg = lr['tb']/calls if calls else 0
         calls_range = np.arange(max(1,int(calls*0.7)),int(calls*1.5)+1)
         tb_range = np.linspace(tb_avg*0.8,tb_avg*1.3,10)

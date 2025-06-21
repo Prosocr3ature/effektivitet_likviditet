@@ -9,7 +9,7 @@ import random
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from openai import OpenAI
+from openai import OpenAI, error as openai_error
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="📈 Försäljningslogg & Affärer", layout="wide")
@@ -101,7 +101,6 @@ if len(df_a) >= 5:
     df_a['cluster'] = kmeans.fit_predict(Xa)
 else:
     kmeans = None
-    df_a['cluster'] = []
 
 # --- INPUT LAYOUT ---
 col1, col2, col3 = st.columns([1.5,1,1])
@@ -218,19 +217,21 @@ with tab3:
         st.subheader('Veckosammanställning')
         st.dataframe(weekly)
         st.line_chart(weekly[['tb','lon']])
-        # GPT summary
         week_num = weekly.index[-1]
         tot_tb = weekly['tb'].iloc[-1]
         days = df3[df3['vecka']==week_num]['datum'].nunique()
         prompt = f"Veckorapport: vecka {week_num}, totalt TB {tot_tb:.0f} kr över {days} dagar. Ge en peppande sammanfattning på svenska."
         if openai_client.api_key:
-            resp = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role":"user","content":prompt}]
-            )
-            st.markdown(resp.choices[0].message.content)
-        else:
-            st.info('Ange OPENAI_KEY i secrets för GPT-summering')
+            try:
+                resp = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role":"user","content":prompt}]
+                )
+                st.markdown(resp.choices[0].message.content)
+            except openai_error.RateLimitError:
+                st.warning("GPT-tjänsten är överbelastad, försök igen om en liten stund.")
+            except Exception as e:
+                st.error(f"Fel vid GPT-anrop: {e}")
 
 # Tab4: Goal history & simulation heatmap
 with tab4:

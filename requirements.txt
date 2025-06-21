@@ -1,6 +1,7 @@
-streamlit==1.22.0
+streamlit
 pandas
 numpy
 matplotlib
 scikit-learn
+openai
 openpyxl

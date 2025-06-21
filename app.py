@@ -9,7 +9,6 @@ import random
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from openai import OpenAI, error as openai_error
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="📈 Försäljningslogg & Affärer", layout="wide")
@@ -57,9 +56,6 @@ cursor.execute('''
 ''')
 conn.commit()
 
-# --- OPENAI CLIENT SETUP ---
-openai_client = OpenAI(api_key=st.secrets.get("OPENAI_KEY", ""))
-
 # --- MOTIVATION MESSAGE ---
 msgs = [
     "🔥 Disciplin slår motivation – varje dag!",
@@ -100,6 +96,7 @@ if len(df_a) >= 5:
     kmeans = KMeans(n_clusters=2, random_state=0)
     df_a['cluster'] = kmeans.fit_predict(Xa)
 else:
+    scaler = None
     kmeans = None
 
 # --- INPUT LAYOUT ---
@@ -124,10 +121,12 @@ with col1:
         lon = tb*0.45
         cursor.execute('''
             INSERT OR REPLACE INTO logg
-            (datum,samtal,tid_min,tb,tb_per_samtal,tb_per_timme,snitt_min_per_samtal,lon,kommentar,energi,humor)
+            (datum,samtal,tid_min,tb,tb_per_samtal,tb_per_timme,
+             snitt_min_per_samtal,lon,kommentar,energi,humor)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ''',(
-            datum.strftime('%Y-%m-%d'),samtal,tid_min,tb,tb_ps,tb_pt,snitt,lon,kommentar,energi,humor
+            datum.strftime('%Y-%m-%d'),samtal,tid_min,tb,
+            tb_ps,tb_pt,snitt,lon,kommentar,energi,humor
         ))
         conn.commit()
         st.success('Dagslogg sparad!')
@@ -144,14 +143,22 @@ with col2:
     if st.button('💾 Spara mål'):
         cursor.execute('''
             INSERT OR REPLACE INTO mal
-            (datum,tb_mal,samtal_mal,lon_mal,specifikt,realistiskt,tidsbundet)
+            (datum,tb_mal,samtal_mal,lon_mal,
+             specifikt,realistiskt,tidsbundet)
             VALUES(?,?,?,?,?,?,?)''',(
-            datum.strftime('%Y-%m-%d'),g_tb,g_samtal,g_lon,spec,real,tids
+            datum.strftime('%Y-%m-%d'),
+            g_tb,g_samtal,g_lon,
+            spec,real,tids
         ))
         conn.commit()
         st.success('SMART-mål sparade!')
         if tids:
-            days_left = max(1,(pd.to_datetime(tids) - pd.Timestamp(datum)).days)
+            try:
+                days_left = max(1,
+                    (pd.to_datetime(tids) - pd.Timestamp(datum)).days
+                )
+            except:
+                days_left = 1
         else:
             days_left = 1
         per_day_tb = g_tb/days_left
@@ -165,51 +172,71 @@ with col3:
     closed = st.time_input('Stängd tid')
     tb_a = st.number_input('TB affär',0.0,step=100.0)
     if st.button('📌 Spara affär'):
-        diff = (datetime.combine(datum,closed)-datetime.combine(datum,sent)).seconds/60
+        diff = (datetime.combine(datum,closed)
+                - datetime.combine(datum,sent)).seconds/60
         cursor.execute('''
             INSERT INTO affarer
-            (datum,affar_namn,skickad_tid,stangd_tid,minuter_till_stangning,tb)
+            (datum,affar_namn,skickad_tid,stangd_tid,
+             minuter_till_stangning,tb)
             VALUES(?,?,?,?,?,?)''',(
-            datum.strftime('%Y-%m-%d'),aff_n,sent.strftime('%H:%M'),
-            closed.strftime('%H:%M'),diff,tb_a
+            datum.strftime('%Y-%m-%d'),
+            aff_n,sent.strftime('%H:%M'),
+            closed.strftime('%H:%M'),
+            diff,tb_a
         ))
         conn.commit()
         st.success('Affär sparad!')
 
 st.divider()
-tab1,tab2,tab3,tab4 = st.tabs(['📊 Dag','📋 Affärer','🏆 Analys','🎯 Målhistorik'])
+tab1,tab2,tab3,tab4 = st.tabs(
+    ['📊 Dag','📋 Affärer','🏆 Analys','🎯 Målhistorik']
+)
 
 # Tab1: Day log & recommendation
 with tab1:
-    df = pd.read_sql_query('SELECT * FROM logg ORDER BY datum DESC',conn)
+    df = pd.read_sql_query(
+        'SELECT * FROM logg ORDER BY datum DESC', conn
+    )
     if not df.empty:
         df['datum']=pd.to_datetime(df['datum'])
         st.dataframe(df,use_container_width=True)
         if rec_model:
             inc = st.slider('Öka samtal med (%)',-50,100,0)
             new_calls = df.iloc[0]['samtal']*(1+inc/100)
-            pred = rec_model.predict([[new_calls, df.iloc[0]['tid_min']]])[0]
-            st.write(f"➡️ Om du ökar samtalen med {inc}% → TB ≈ {pred:.0f} kr")
+            pred = rec_model.predict(
+                [[new_calls, df.iloc[0]['tid_min']]]
+            )[0]
+            st.write(
+                f"➡️ Om du ökar samtalen med {inc}% → "
+                f"TB ≈ {pred:.0f} kr"
+            )
 
 # Tab2: Business + clustering
 with tab2:
-    df2 = pd.read_sql_query('SELECT * FROM affarer',conn)
+    df2 = pd.read_sql_query('SELECT * FROM affarer', conn)
     if not df2.empty:
         df2['datum']=pd.to_datetime(df2['datum'])
         st.dataframe(df2,use_container_width=True)
-        if kmeans:
-            Xc = scaler.transform(df2[['minuter_till_stangning','tb']])
+        if kmeans and scaler:
+            Xc = scaler.transform(
+                df2[['minuter_till_stangning','tb']]
+            )
             df2['cluster']=kmeans.predict(Xc)
             st.subheader('Segmentering av affärer')
             fig,ax=plt.subplots()
-            ax.scatter(df2['minuter_till_stangning'],df2['tb'],c=df2['cluster'],cmap='viridis')
+            ax.scatter(
+                df2['minuter_till_stangning'],
+                df2['tb'],
+                c=df2['cluster'],
+                cmap='viridis'
+            )
             ax.set_xlabel('Tid (min)')
             ax.set_ylabel('TB')
             st.pyplot(fig)
 
-# Tab3: Analysis & GPT summary
+# Tab3: Analysis (no API)
 with tab3:
-    df3 = pd.read_sql_query('SELECT * FROM logg',conn)
+    df3 = pd.read_sql_query('SELECT * FROM logg', conn)
     if not df3.empty:
         df3['datum']=pd.to_datetime(df3['datum'])
         df3['vecka']=df3['datum'].dt.isocalendar().week
@@ -217,44 +244,60 @@ with tab3:
         st.subheader('Veckosammanställning')
         st.dataframe(weekly)
         st.line_chart(weekly[['tb','lon']])
-        week_num = weekly.index[-1]
-        tot_tb = weekly['tb'].iloc[-1]
-        days = df3[df3['vecka']==week_num]['datum'].nunique()
-        prompt = f"Veckorapport: vecka {week_num}, totalt TB {tot_tb:.0f} kr över {days} dagar. Ge en peppande sammanfattning på svenska."
-        if openai_client.api_key:
-            try:
-                resp = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role":"user","content":prompt}]
-                )
-                st.markdown(resp.choices[0].message.content)
-            except openai_error.RateLimitError:
-                st.warning("GPT-tjänsten är överbelastad, försök igen om en liten stund.")
-            except Exception as e:
-                st.error(f"Fel vid GPT-anrop: {e}")
+        # Local summary
+        if len(weekly) >= 2:
+            last, prev = weekly['tb'].iloc[-1], weekly['tb'].iloc[-2]
+            change = last - prev
+            pct = (change/prev*100) if prev else 0
+            trend = "upp" if change>0 else "ner" if change<0 else "samma"
+            st.write(
+                f"Den här veckan {trend} med {change:.0f} kr "
+                f"({pct:.1f}%) jämfört med förra veckan."
+            )
+        else:
+            st.write("Behöver minst två veckor data för trend.")
 
 # Tab4: Goal history & simulation heatmap
 with tab4:
-    dfg = pd.read_sql_query('SELECT * FROM mal ORDER BY datum DESC',conn)
+    dfg = pd.read_sql_query('SELECT * FROM mal ORDER BY datum DESC', conn)
     if not dfg.empty:
         dfg['datum']=pd.to_datetime(dfg['datum'])
         st.dataframe(dfg,use_container_width=True)
-        day = st.selectbox('Välj dag',dfg['datum'].dt.strftime('%Y-%m-%d'))
+        day = st.selectbox(
+            'Välj dag',
+            dfg['datum'].dt.strftime('%Y-%m-%d')
+        )
         gr = dfg[dfg['datum']==pd.to_datetime(day)].iloc[0]
-        lr = pd.read_sql_query(f"SELECT * FROM logg WHERE datum='{day}'",conn).iloc[0]
+        lr = pd.read_sql_query(
+            f"SELECT * FROM logg WHERE datum='{day}'", conn
+        ).iloc[0]
         pct = lr['tb']/gr['tb_mal']*100 if gr['tb_mal'] else 0
         st.write(f"Måluppfyllelse TB: {pct:.0f}%")
-        calls = lr['samtal']; tb_avg = lr['tb']/calls if calls else 0
-        calls_range = np.arange(max(1,int(calls*0.7)),int(calls*1.5)+1)
-        tb_range = np.linspace(tb_avg*0.8,tb_avg*1.3,10)
-        mat = np.outer(calls_range,tb_range)
+        calls = lr['samtal']
+        tb_avg = lr['tb']/calls if calls else 0
+        calls_range = np.arange(
+            max(1,int(calls*0.7)),
+            int(calls*1.5)+1
+        )
+        tb_range = np.linspace(tb_avg*0.8, tb_avg*1.3, 10)
+        mat = np.outer(calls_range, tb_range)
         fig,ax=plt.subplots()
-        c=ax.imshow(mat,origin='lower',extent=[tb_range[0],tb_range[-1],calls_range[0],calls_range[-1]])
+        c=ax.imshow(
+            mat,
+            origin='lower',
+            extent=[tb_range[0],tb_range[-1],
+                    calls_range[0],calls_range[-1]]
+        )
         fig.colorbar(c,ax=ax,label='TB')
-        ax.set_xlabel('Snitt-TB'); ax.set_ylabel('Samtal')
+        ax.set_xlabel('Snitt-TB')
+        ax.set_ylabel('Samtal')
         st.pyplot(fig)
 
 # Export full log to Excel
 buf = io.BytesIO()
-pd.read_sql_query('SELECT * FROM logg',conn).to_excel(buf,index=False)
-st.download_button('📥 Ladda ner logg.xlsx',buf.getvalue(),file_name='logg.xlsx')
+pd.read_sql_query('SELECT * FROM logg', conn).to_excel(buf, index=False)
+st.download_button(
+    '📥 Ladda ner logg.xlsx',
+    buf.getvalue(),
+    file_name='logg.xlsx'
+)

@@ -102,7 +102,7 @@ else:
 # --- INPUT LAYOUT ---
 col1, col2, col3 = st.columns([1.5,1,1])
 
-# Daily inputs
+# Daglig inmatning
 with col1:
     st.subheader("🗓️ Dagslogg")
     datum = st.date_input('Datum', datetime.today())
@@ -131,7 +131,7 @@ with col1:
         conn.commit()
         st.success('Dagslogg sparad!')
 
-# SMART goals with micro-tasks
+# Mål­sättning
 with col2:
     st.subheader('🎯 Sätt SMART-mål')
     g_tb = st.number_input('TB-mål',0,step=100)
@@ -164,7 +164,7 @@ with col2:
         per_day_tb = g_tb/days_left
         st.write(f"⭐ Gör minst {per_day_tb:.0f} kr TB per dag för att nå målet.")
 
-# Business entries
+# Registrering av affär
 with col3:
     st.subheader('📤 Lägg till affär')
     aff_n = st.text_input('Affärsnamn')
@@ -192,38 +192,31 @@ tab1,tab2,tab3,tab4 = st.tabs(
     ['📊 Dag','📋 Affärer','🏆 Analys','🎯 Målhistorik']
 )
 
-# Tab1: Day log & recommendation
+# Flik: Daglig logg + prediktion
 with tab1:
     df = pd.read_sql_query(
         'SELECT * FROM logg ORDER BY datum DESC', conn
     )
     if not df.empty:
-        df['datum']=pd.to_datetime(df['datum'])
-        st.dataframe(df,use_container_width=True)
+        df['datum'] = pd.to_datetime(df['datum'])
+        st.dataframe(df, use_container_width=True)
         if rec_model:
-            inc = st.slider('Öka samtal med (%)',-50,100,0)
-            new_calls = df.iloc[0]['samtal']*(1+inc/100)
-            pred = rec_model.predict(
-                [[new_calls, df.iloc[0]['tid_min']]]
-            )[0]
-            st.write(
-                f"➡️ Om du ökar samtalen med {inc}% → "
-                f"TB ≈ {pred:.0f} kr"
-            )
+            inc = st.slider('Öka samtal med (%)', -50, 100, 0)
+            new_calls = df.iloc[0]['samtal'] * (1 + inc/100)
+            pred = rec_model.predict([[new_calls, df.iloc[0]['tid_min']]])[0]
+            st.write(f"➡️ Om du ökar samtalen med {inc}% → TB ≈ {pred:.0f} kr")
 
-# Tab2: Business + clustering
+# Flik: Affärer + segmentering
 with tab2:
     df2 = pd.read_sql_query('SELECT * FROM affarer', conn)
     if not df2.empty:
-        df2['datum']=pd.to_datetime(df2['datum'])
-        st.dataframe(df2,use_container_width=True)
+        df2['datum'] = pd.to_datetime(df2['datum'])
+        st.dataframe(df2, use_container_width=True)
         if kmeans and scaler:
-            Xc = scaler.transform(
-                df2[['minuter_till_stangning','tb']]
-            )
-            df2['cluster']=kmeans.predict(Xc)
+            Xc = scaler.transform(df2[['minuter_till_stangning','tb']])
+            df2['cluster'] = kmeans.predict(Xc)
             st.subheader('Segmentering av affärer')
-            fig,ax=plt.subplots()
+            fig, ax = plt.subplots()
             ax.scatter(
                 df2['minuter_till_stangning'],
                 df2['tb'],
@@ -234,70 +227,50 @@ with tab2:
             ax.set_ylabel('TB')
             st.pyplot(fig)
 
-# Tab3: Analysis (no API)
+# Flik: Vecko-/månadssammanställning + trend
 with tab3:
     df3 = pd.read_sql_query('SELECT * FROM logg', conn)
     if not df3.empty:
-        df3['datum']=pd.to_datetime(df3['datum'])
-        df3['vecka']=df3['datum'].dt.isocalendar().week
+        df3['datum'] = pd.to_datetime(df3['datum'])
+        df3['vecka'] = df3['datum'].dt.isocalendar().week
         weekly = df3.groupby('vecka')[['tb','samtal','lon']].sum()
         st.subheader('Veckosammanställning')
         st.dataframe(weekly)
         st.line_chart(weekly[['tb','lon']])
-        # Local summary
         if len(weekly) >= 2:
-            last, prev = weekly['tb'].iloc[-1], weekly['tb'].iloc[-2]
-            change = last - prev
-            pct = (change/prev*100) if prev else 0
-            trend = "upp" if change>0 else "ner" if change<0 else "samma"
-            st.write(
-                f"Den här veckan {trend} med {change:.0f} kr "
-                f"({pct:.1f}%) jämfört med förra veckan."
-            )
-        else:
-            st.write("Behöver minst två veckor data för trend.")
+            diff = weekly['tb'].iloc[-1] - weekly['tb'].iloc[-2]
+            pct = diff / weekly['tb'].iloc[-2] * 100
+            trend = "upp" if diff > 0 else "ner" if diff < 0 else "oförändrat"
+            st.write(f"Den här veckan {trend} med {diff:.0f} kr ({pct:.1f}%) jämfört med förra veckan.")
 
-# Tab4: Goal history & simulation heatmap
+# Flik: Målhistorik + simulering/heatmap
 with tab4:
     dfg = pd.read_sql_query('SELECT * FROM mal ORDER BY datum DESC', conn)
     if not dfg.empty:
-        dfg['datum']=pd.to_datetime(dfg['datum'])
-        st.dataframe(dfg,use_container_width=True)
-        day = st.selectbox(
-            'Välj dag',
-            dfg['datum'].dt.strftime('%Y-%m-%d')
-        )
-        gr = dfg[dfg['datum']==pd.to_datetime(day)].iloc[0]
-        lr = pd.read_sql_query(
-            f"SELECT * FROM logg WHERE datum='{day}'", conn
-        ).iloc[0]
-        pct = lr['tb']/gr['tb_mal']*100 if gr['tb_mal'] else 0
+        dfg['datum'] = pd.to_datetime(dfg['datum'])
+        st.dataframe(dfg, use_container_width=True)
+        day = st.selectbox('Välj dag', dfg['datum'].dt.strftime('%Y-%m-%d'))
+        gr = dfg[dfg['datum'] == pd.to_datetime(day)].iloc[0]
+        lr = pd.read_sql_query(f"SELECT * FROM logg WHERE datum='{day}'", conn).iloc[0]
+        pct = lr['tb'] / gr['tb_mal'] * 100 if gr['tb_mal'] else 0
         st.write(f"Måluppfyllelse TB: {pct:.0f}%")
         calls = lr['samtal']
         tb_avg = lr['tb']/calls if calls else 0
-        calls_range = np.arange(
-            max(1,int(calls*0.7)),
-            int(calls*1.5)+1
-        )
+        calls_range = np.arange(max(1, int(calls*0.7)), int(calls*1.5)+1)
         tb_range = np.linspace(tb_avg*0.8, tb_avg*1.3, 10)
         mat = np.outer(calls_range, tb_range)
-        fig,ax=plt.subplots()
-        c=ax.imshow(
+        fig, ax = plt.subplots()
+        c = ax.imshow(
             mat,
             origin='lower',
-            extent=[tb_range[0],tb_range[-1],
-                    calls_range[0],calls_range[-1]]
+            extent=[tb_range[0], tb_range[-1], calls_range[0], calls_range[-1]]
         )
-        fig.colorbar(c,ax=ax,label='TB')
+        fig.colorbar(c, ax=ax, label='TB')
         ax.set_xlabel('Snitt-TB')
         ax.set_ylabel('Samtal')
         st.pyplot(fig)
 
-# Export full log to Excel
+# Excel-export av hela loggen
 buf = io.BytesIO()
 pd.read_sql_query('SELECT * FROM logg', conn).to_excel(buf, index=False)
-st.download_button(
-    '📥 Ladda ner logg.xlsx',
-    buf.getvalue(),
-    file_name='logg.xlsx'
-)
+st.download_button('📥 Ladda ner logg.xlsx', buf.getvalue(), file_name='logg.xlsx')

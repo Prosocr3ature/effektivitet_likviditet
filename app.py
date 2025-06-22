@@ -137,7 +137,6 @@ with col2:
             c.execute("DELETE FROM affarer WHERE id=?", (st.session_state.selected_affar,))
             conn.commit()
             st.success("Affär raderad!")
-
     else:
         if st.button("➕ Lägg till affär"):
             c.execute("""
@@ -199,7 +198,6 @@ else:
 st.markdown("---")
 st.subheader("🗺️ Segmentering av affärer")
 full_aff = pd.read_sql_query("SELECT minuter_till_stangning,tb FROM affarer", conn)
-
 if not full_aff.empty:
     n_clusters = min(2, len(full_aff))
     scaler = StandardScaler()
@@ -223,21 +221,21 @@ if not full_aff.empty:
 else:
     st.info("Inga affärer att segmentera.")
 
-# --- AUTOMATISKA SMART‐MÅL ---
+# --- AUTOMATISKA SMART‐MÅL (ingen minimi-gräns) ---
 st.markdown("---")
 st.subheader("🎯 Automatiska målförslag")
-df7 = pd.read_sql_query("""
-  SELECT * FROM logg 
-  WHERE datum >= date('now','-7 days')
-""", conn)
-if len(df7) >= 2:
+df7 = pd.read_sql_query(
+    "SELECT * FROM logg WHERE datum >= date('now','-7 days')",
+    conn
+)
+if not df7.empty:
     avg_calls = df7["samtal"].mean()
     avg_tb    = df7["tb"].mean()
-    st.write(f"- Samtalsmål imorgon: **{int(avg_calls*1.05)}** (≈+5%)")
-    st.write(f"- TB‐mål imorgon: **{int(avg_tb*1.10)} kr** (≈+10%)")
+    st.write(f"- Samtalsmål imorgon: **{int(avg_calls * 1.05)}** (≈+5%)")
+    st.write(f"- TB‐mål imorgon: **{int(avg_tb * 1.10)} kr** (≈+10%)")
     st.write("- Fokusera på nyteckningar för högre snitt‐TB.")
 else:
-    st.info("Behöver minst 2 dagars data för målförslag…")
+    st.info("Mata in minst en dags logg för att få målförslag…")
 
 # --- EXCEL EXPORT AV HELA LOGGEN ---
 st.markdown("---")

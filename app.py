@@ -18,7 +18,7 @@ st.markdown("💪 Fokusera på process, inte bara resultat.")
 conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
 c = conn.cursor()
 
-# Skapa logg-tabell
+# Logg-tabell
 c.execute("""
 CREATE TABLE IF NOT EXISTS logg (
   datum TEXT PRIMARY KEY,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS logg (
 )
 """)
 
-# Skapa affärer-tabell med minuter_till_stangning
+# Affärer-tabell med minuter_till_stangning
 c.execute("""
 CREATE TABLE IF NOT EXISTS affarer (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,14 +45,6 @@ CREATE TABLE IF NOT EXISTS affarer (
   minuter_till_stangning REAL
 )
 """)
-
-# Om man tidigare kört utan minuter_till_stangning, lägg till kolumn
-try:
-    c.execute("ALTER TABLE affarer ADD COLUMN minuter_till_stangning REAL")
-except sqlite3.OperationalError:
-    # kolumnen finns redan
-    pass
-
 conn.commit()
 
 # --- SESSION STATE FOR EDITING ---
@@ -88,6 +80,9 @@ with col1:
 
 with col2:
     st.subheader("📤 Lägg till / Redigera affär")
+    skickad = st.time_input("Skickad tid")
+    stangd  = st.time_input("Stängd tid")
+
     bolagstyp    = st.selectbox("Bolagstyp", ["Enskild firma","Aktiebolag"])
     foretagsnamn = st.text_input("Företagsnamn")
     abonnemang   = st.number_input("Abonnemang sålda", min_value=0, step=1)
@@ -95,8 +90,8 @@ with col2:
     tb_affar     = st.number_input("TB för affären", min_value=0.0, step=100.0)
     cashback     = st.number_input("Cashback till kund", min_value=0.0, step=10.0)
     margin       = tb_affar - cashback
+    minuter_diff = (datetime.combine(idag, stangd) - datetime.combine(idag, skickad)).seconds / 60
 
-    # Hämta dagens affärer
     aff_df = pd.read_sql_query(
         "SELECT * FROM affarer WHERE datum=? ORDER BY id",
         conn, params=(idag.strftime("%Y-%m-%d"),)
@@ -106,10 +101,8 @@ with col2:
         "Välj affär att redigera", [None] + ids
     )
 
-    # Redigera / radera
     if st.session_state.selected_affar:
         row = aff_df[aff_df["id"] == st.session_state.selected_affar].iloc[0]
-        # Förifyll
         bolagstyp    = st.selectbox(
             "Bolagstyp",
             ["Enskild firma","Aktiebolag"],
@@ -124,19 +117,17 @@ with col2:
         )
         tb_affar     = st.number_input("TB för affären", value=row["tb"])
         cashback     = st.number_input("Cashback till kund", value=row["cashback"])
-        # Räkna om marginal & tid (antar att minuten fanns vid insättning)
         margin       = tb_affar - cashback
-        minuter_diff = row["minuter_till_stangning"]
 
         if st.button("🔄 Uppdatera affär"):
             c.execute("""
               UPDATE affarer SET
                 bolagstyp=?, foretagsnamn=?, abonnemang=?, dealtyp=?,
-                tb=?, cashback=?, margin=?
+                tb=?, cashback=?, margin=?, minuter_till_stangning=?
               WHERE id=?
             """, (
               bolagstyp, foretagsnamn, abonnemang, dealtyp,
-              tb_affar, cashback, margin,
+              tb_affar, cashback, margin, minuter_diff,
               st.session_state.selected_affar
             ))
             conn.commit()
@@ -147,21 +138,17 @@ with col2:
             conn.commit()
             st.success("Affär raderad!")
 
-    # Lägg till ny
     else:
         if st.button("➕ Lägg till affär"):
-            # Vi behöver minutiös tidsskillnad: fråga användaren om det är önskvärt
-            # Här sätter vi 0 som default
-            minuter_diff = 0
             c.execute("""
               INSERT INTO affarer
-                (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,tb,cashback,margin,minuter_till_stangning)
+                (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,
+                 tb,cashback,margin,minuter_till_stangning)
               VALUES (?,?,?,?,?,?,?,?,?)
             """, (
               idag.strftime("%Y-%m-%d"),
               bolagstyp, foretagsnamn, abonnemang, dealtyp,
-              tb_affar, cashback, margin,
-              minuter_diff
+              tb_affar, cashback, margin, minuter_diff
             ))
             conn.commit()
             st.success("Affär tillagd!")
@@ -175,7 +162,7 @@ aff_df = pd.read_sql_query(
 )
 st.dataframe(aff_df.drop(columns=["datum"]), use_container_width=True)
 
-# --- KPI & RECOMMENDATIONS ---
+# --- KPI & RECOMMENDATION ---
 st.markdown("---")
 st.subheader("🤖 Dagens KPI & rekommendationer")
 log = pd.read_sql_query(
@@ -190,7 +177,6 @@ if not log.empty:
     tot_affs   = len(aff_df)
     avg_tb_aff = tot_affs and tot_tb/tot_affs or 0
     conv_rate  = tot_calls and tot_affs/tot_calls or 0
-    tb_per_min = tot_time and tot_tb/tot_time or 0
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total TB",      f"{tot_tb:.0f} kr")
@@ -198,7 +184,7 @@ if not log.empty:
     m3.metric("TB per affär",  f"{avg_tb_aff:.0f} kr")
     m4.metric("Konv.grad",     f"{conv_rate:.1%}")
 
-    df_model = pd.read_sql_query("SELECT samtal,tid_min,tb FROM logg WHERE tb IS NOT NULL", conn)
+    df_model = pd.read_sql_query("SELECT samtal,tid_min,tb FROM logg", conn)
     if len(df_model) >= 5:
         X = df_model[["samtal","tid_min"]]; y = df_model["tb"]
         model = RandomForestRegressor(n_estimators=30, random_state=0).fit(X, y)
@@ -209,23 +195,33 @@ if not log.empty:
 else:
     st.info("Mata in dagens logg för KPI‐analys…")
 
-# --- CLUSTERING AV AFFÄRER ---
+# --- AFFÄRSSEGMENTERING (utan minsta‐gräns) ---
 st.markdown("---")
 st.subheader("🗺️ Segmentering av affärer")
 full_aff = pd.read_sql_query("SELECT minuter_till_stangning,tb FROM affarer", conn)
-if len(full_aff) >= 5:
+
+if not full_aff.empty:
+    n_clusters = min(2, len(full_aff))
     scaler = StandardScaler()
     Xs     = scaler.fit_transform(full_aff)
-    kmeans = KMeans(n_clusters=2, random_state=0).fit(Xs)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(Xs)
     clusters = kmeans.predict(Xs)
     full_aff["cluster"] = clusters
+
     fig, ax = plt.subplots()
-    ax.scatter(full_aff["minuter_till_stangning"], full_aff["tb"], c=clusters, cmap="tab10")
+    ax.scatter(
+        full_aff["minuter_till_stangning"],
+        full_aff["tb"],
+        c=full_aff["cluster"],
+        cmap="tab10",
+        s=50
+    )
     ax.set_xlabel("Tid till stängning (min)")
     ax.set_ylabel("TB")
-    st.pyplot(fig)
+    ax.set_title("Kluster av affärer")
+    st.pyplot(fig, use_container_width=True)
 else:
-    st.info("Behöver minst 5 affärer för segmentering…")
+    st.info("Inga affärer att segmentera.")
 
 # --- AUTOMATISKA SMART‐MÅL ---
 st.markdown("---")

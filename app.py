@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
+import io
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
@@ -16,6 +17,8 @@ st.markdown("💪 Fokusera på process, inte bara resultat.")
 # --- DATABASE INITIALIZATION ---
 conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
 c = conn.cursor()
+
+# Skapa logg-tabell
 c.execute("""
 CREATE TABLE IF NOT EXISTS logg (
   datum TEXT PRIMARY KEY,
@@ -26,6 +29,8 @@ CREATE TABLE IF NOT EXISTS logg (
   humor INTEGER
 )
 """)
+
+# Skapa affärer-tabell med minuter_till_stangning
 c.execute("""
 CREATE TABLE IF NOT EXISTS affarer (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,9 +41,18 @@ CREATE TABLE IF NOT EXISTS affarer (
   dealtyp TEXT,
   tb REAL,
   cashback REAL,
-  margin REAL
+  margin REAL,
+  minuter_till_stangning REAL
 )
 """)
+
+# Om man tidigare kört utan minuter_till_stangning, lägg till kolumn
+try:
+    c.execute("ALTER TABLE affarer ADD COLUMN minuter_till_stangning REAL")
+except sqlite3.OperationalError:
+    # kolumnen finns redan
+    pass
+
 conn.commit()
 
 # --- SESSION STATE FOR EDITING ---
@@ -82,6 +96,7 @@ with col2:
     cashback     = st.number_input("Cashback till kund", min_value=0.0, step=10.0)
     margin       = tb_affar - cashback
 
+    # Hämta dagens affärer
     aff_df = pd.read_sql_query(
         "SELECT * FROM affarer WHERE datum=? ORDER BY id",
         conn, params=(idag.strftime("%Y-%m-%d"),)
@@ -91,8 +106,10 @@ with col2:
         "Välj affär att redigera", [None] + ids
     )
 
+    # Redigera / radera
     if st.session_state.selected_affar:
         row = aff_df[aff_df["id"] == st.session_state.selected_affar].iloc[0]
+        # Förifyll
         bolagstyp    = st.selectbox(
             "Bolagstyp",
             ["Enskild firma","Aktiebolag"],
@@ -107,7 +124,9 @@ with col2:
         )
         tb_affar     = st.number_input("TB för affären", value=row["tb"])
         cashback     = st.number_input("Cashback till kund", value=row["cashback"])
+        # Räkna om marginal & tid (antar att minuten fanns vid insättning)
         margin       = tb_affar - cashback
+        minuter_diff = row["minuter_till_stangning"]
 
         if st.button("🔄 Uppdatera affär"):
             c.execute("""
@@ -127,21 +146,27 @@ with col2:
             c.execute("DELETE FROM affarer WHERE id=?", (st.session_state.selected_affar,))
             conn.commit()
             st.success("Affär raderad!")
+
+    # Lägg till ny
     else:
         if st.button("➕ Lägg till affär"):
+            # Vi behöver minutiös tidsskillnad: fråga användaren om det är önskvärt
+            # Här sätter vi 0 som default
+            minuter_diff = 0
             c.execute("""
               INSERT INTO affarer
-                (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,tb,cashback,margin)
-              VALUES (?,?,?,?,?,?,?,?)
+                (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,tb,cashback,margin,minuter_till_stangning)
+              VALUES (?,?,?,?,?,?,?,?,?)
             """, (
               idag.strftime("%Y-%m-%d"),
               bolagstyp, foretagsnamn, abonnemang, dealtyp,
-              tb_affar, cashback, margin
+              tb_affar, cashback, margin,
+              minuter_diff
             ))
             conn.commit()
             st.success("Affär tillagd!")
 
-# --- DISPLAY TODAY'S DEALS ---
+# --- DAGENS AFFÄRER I TABELL ---
 st.markdown("---")
 st.subheader("📋 Dagens affärer")
 aff_df = pd.read_sql_query(
@@ -184,7 +209,7 @@ if not log.empty:
 else:
     st.info("Mata in dagens logg för KPI‐analys…")
 
-# --- CLUSTERING OF ALL DEALS ---
+# --- CLUSTERING AV AFFÄRER ---
 st.markdown("---")
 st.subheader("🗺️ Segmentering av affärer")
 full_aff = pd.read_sql_query("SELECT minuter_till_stangning,tb FROM affarer", conn)
@@ -202,7 +227,7 @@ if len(full_aff) >= 5:
 else:
     st.info("Behöver minst 5 affärer för segmentering…")
 
-# --- AUTOMATIC SMART GOALS ---
+# --- AUTOMATISKA SMART‐MÅL ---
 st.markdown("---")
 st.subheader("🎯 Automatiska målförslag")
 df7 = pd.read_sql_query("""
@@ -218,9 +243,9 @@ if len(df7) >= 2:
 else:
     st.info("Behöver minst 2 dagars data för målförslag…")
 
-# --- EXCEL EXPORT OF FULL LOG ---
+# --- EXCEL EXPORT AV HELA LOGGEN ---
 st.markdown("---")
-st.subheader("📥 Ladda ner hela loggen")
+st.subheader("📥 Ladda ner hela loggen som Excel")
 buf = io.BytesIO()
 pd.read_sql_query('SELECT * FROM logg', conn).to_excel(buf, index=False)
 st.download_button(

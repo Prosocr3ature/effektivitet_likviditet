@@ -229,7 +229,7 @@ else:
 
 # --- GULDKUNDER-FLIKEN ---
 st.markdown("---")
-st.subheader("🏅 Guldkunder – Excel-liknande vy")
+st.subheader("🏅 Guldkunder")
 df_guld = pd.read_sql_query("SELECT * FROM guldkunder ORDER BY id", conn)
 edited = st.data_editor(  # här använder vi st.data_editor
     df_guld, num_rows="dynamic", key="guld_editor"

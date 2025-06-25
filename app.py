@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS logg (
 )
 """)
 
-# Affärer-tabell med minuter_till_stangning
+# Affärer-tabell
 c.execute("""
 CREATE TABLE IF NOT EXISTS affarer (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,9 +45,25 @@ CREATE TABLE IF NOT EXISTS affarer (
   minuter_till_stangning REAL
 )
 """)
+
+# Guldkunder-tabell
+c.execute("""
+CREATE TABLE IF NOT EXISTS guldkunder (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  orgnummer TEXT,
+  kontaktnummer TEXT,
+  bindingstid TEXT,
+  abonnemangsform TEXT,
+  pris REAL,
+  operatorsforsok INTEGER,
+  har_kund_svarat TEXT,
+  ovriga_abb_ja_nej TEXT,
+  noteringar TEXT
+)
+""")
 conn.commit()
 
-# --- SESSION STATE FOR EDITING ---
+# --- SESSION STATE FOR EDITING AFFÄRER ---
 if "selected_affar" not in st.session_state:
     st.session_state.selected_affar = None
 
@@ -64,7 +80,6 @@ with col1:
     tb_tot = st.number_input("Total TB (kr)", min_value=0.0, step=100.0)
     energi = st.slider("Energinivå (1–5)", 1, 5, 3)
     humor  = st.slider("Humör (1–5)",      1, 5, 3)
-
     if st.button("💾 Spara dagslogg"):
         c.execute("""
           INSERT OR REPLACE INTO logg
@@ -82,7 +97,6 @@ with col2:
     st.subheader("📤 Lägg till / Redigera affär")
     skickad = st.time_input("Skickad tid")
     stangd  = st.time_input("Stängd tid")
-
     bolagstyp    = st.selectbox("Bolagstyp", ["Enskild firma","Aktiebolag"])
     foretagsnamn = st.text_input("Företagsnamn")
     abonnemang   = st.number_input("Abonnemang sålda", min_value=0, step=1)
@@ -103,22 +117,19 @@ with col2:
 
     if st.session_state.selected_affar:
         row = aff_df[aff_df["id"] == st.session_state.selected_affar].iloc[0]
-        bolagstyp    = st.selectbox(
-            "Bolagstyp",
+        bolagstyp    = st.selectbox("Bolagstyp",
             ["Enskild firma","Aktiebolag"],
             index=["Enskild firma","Aktiebolag"].index(row["bolagstyp"])
         )
         foretagsnamn = st.text_input("Företagsnamn", value=row["foretagsnamn"])
         abonnemang   = st.number_input("Abonnemang sålda", value=int(row["abonnemang"]))
-        dealtyp      = st.selectbox(
-            "Nyteckning eller Förlängning",
+        dealtyp      = st.selectbox("Nyteckning eller Förlängning",
             ["Nyteckning","Förlängning"],
             index=["Nyteckning","Förlängning"].index(row["dealtyp"])
         )
         tb_affar     = st.number_input("TB för affären", value=row["tb"])
         cashback     = st.number_input("Cashback till kund", value=row["cashback"])
         margin       = tb_affar - cashback
-
         if st.button("🔄 Uppdatera affär"):
             c.execute("""
               UPDATE affarer SET
@@ -132,7 +143,6 @@ with col2:
             ))
             conn.commit()
             st.success("Affär uppdaterad!")
-
         if st.button("🗑️ Radera affär"):
             c.execute("DELETE FROM affarer WHERE id=?", (st.session_state.selected_affar,))
             conn.commit()
@@ -176,13 +186,11 @@ if not log.empty:
     tot_affs   = len(aff_df)
     avg_tb_aff = tot_affs and tot_tb/tot_affs or 0
     conv_rate  = tot_calls and tot_affs/tot_calls or 0
-
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total TB",      f"{tot_tb:.0f} kr")
     m2.metric("Antal affärer", f"{tot_affs}")
     m3.metric("TB per affär",  f"{avg_tb_aff:.0f} kr")
     m4.metric("Konv.grad",     f"{conv_rate:.1%}")
-
     df_model = pd.read_sql_query("SELECT samtal,tid_min,tb FROM logg", conn)
     if len(df_model) >= 5:
         X = df_model[["samtal","tid_min"]]; y = df_model["tb"]
@@ -190,11 +198,11 @@ if not log.empty:
         inc = st.slider("Test: öka samtal med (%)", -50, 100, 0)
         new_calls = tot_calls * (1 + inc/100)
         pred_tb   = model.predict([[new_calls, tot_time]])[0]
-        st.write(f"➡️ Om du ökar samtalen med {inc}% → förväntad TB ≈ {pred_tb:.0f} kr")
+        st.write(f"➡️ Om du ökar samtalen med {inc}% → TB ≈ {pred_tb:.0f} kr")
 else:
     st.info("Mata in dagens logg för KPI‐analys…")
 
-# --- AFFÄRSSEGMENTERING (utan minsta‐gräns) ---
+# --- AFFÄRSSEGMENTERING ---
 st.markdown("---")
 st.subheader("🗺️ Segmentering av affärer")
 full_aff = pd.read_sql_query("SELECT minuter_till_stangning,tb FROM affarer", conn)
@@ -205,14 +213,12 @@ if not full_aff.empty:
     kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(Xs)
     clusters = kmeans.predict(Xs)
     full_aff["cluster"] = clusters
-
     fig, ax = plt.subplots()
     ax.scatter(
         full_aff["minuter_till_stangning"],
         full_aff["tb"],
         c=full_aff["cluster"],
-        cmap="tab10",
-        s=50
+        cmap="tab10", s=50
     )
     ax.set_xlabel("Tid till stängning (min)")
     ax.set_ylabel("TB")
@@ -221,19 +227,48 @@ if not full_aff.empty:
 else:
     st.info("Inga affärer att segmentera.")
 
-# --- AUTOMATISKA SMART‐MÅL (ingen minimi-gräns) ---
+# --- GULDKUNDER-FLIKEN ---
+st.markdown("---")
+st.subheader("🏅 Guldkunder – Excel-liknande vy")
+df_guld = pd.read_sql_query("SELECT * FROM guldkunder ORDER BY id", conn)
+edited = st.experimental_data_editor(
+    df_guld, num_rows="dynamic", key="guld_editor"
+)
+if st.button("💾 Spara Guldkunder"):
+    c.execute("DELETE FROM guldkunder")
+    for _, row in edited.iterrows():
+        c.execute("""
+          INSERT INTO guldkunder
+            (orgnummer, kontaktnummer, bindingstid, abonnemangsform,
+             pris, operatorsforsok, har_kund_svarat, ovriga_abb_ja_nej,
+             noteringar)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+          row.get("orgnummer",""),
+          row.get("kontaktnummer",""),
+          row.get("bindingstid",""),
+          row.get("abonnemangsform",""),
+          float(row.get("pris") or 0),
+          int(row.get("operatorsforsok") or 0),
+          row.get("har kund svarat?",""),
+          row.get("övriga abb JA/NEJ?",""),
+          row.get("noteringar","")
+        ))
+    conn.commit()
+    st.success("Guldkunder sparade!")
+
+# --- AUTOMATISKA SMART-MÅL ---
 st.markdown("---")
 st.subheader("🎯 Automatiska målförslag")
 df7 = pd.read_sql_query(
-    "SELECT * FROM logg WHERE datum >= date('now','-7 days')",
-    conn
+    "SELECT * FROM logg WHERE datum >= date('now','-7 days')", conn
 )
 if not df7.empty:
     avg_calls = df7["samtal"].mean()
     avg_tb    = df7["tb"].mean()
-    st.write(f"- Samtalsmål imorgon: **{int(avg_calls * 1.05)}** (≈+5%)")
-    st.write(f"- TB‐mål imorgon: **{int(avg_tb * 1.10)} kr** (≈+10%)")
-    st.write("- Fokusera på nyteckningar för högre snitt‐TB.")
+    st.write(f"- Samtalsmål imorgon: **{int(avg_calls*1.05)}** (≈+5%)")
+    st.write(f"- TB-mål imorgon: **{int(avg_tb*1.10)} kr** (≈+10%)")
+    st.write("- Fokusera på nyteckningar för högre snitt-TB.")
 else:
     st.info("Mata in minst en dags logg för att få målförslag…")
 

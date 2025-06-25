@@ -4,4 +4,4 @@ numpy>=1.21
 matplotlib>=3.4
 scikit-learn>=1.0
 openpyxl>=3.0
-openai>=0.28.0
+openai==0.28.0

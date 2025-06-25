@@ -10,8 +10,8 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="📈 Säljdashboard", layout="wide")
-st.title("📈 Försäljningslogg & Affärer")
+st.set_page_config(page_title="📈 DaVinci's Duk", layout="wide")
+st.title("📈 DaVinci's Duk")
 st.markdown("💪 Fokusera på process, inte bara resultat.")
 
 # --- DATABASE INITIALIZATION ---

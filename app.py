@@ -194,7 +194,7 @@ st.markdown("---")
 st.subheader("📋 Dagens affärer")
 df_today = pd.read_sql_query(
     "SELECT * FROM affarer WHERE datum=?", conn,
-    params=(idig.strftime("%Y-%m-%d"),)
+    params=(idag.strftime("%Y-%m-%d"),)
 )
 st.dataframe(df_today.drop(columns=["datum"]), use_container_width=True)
 

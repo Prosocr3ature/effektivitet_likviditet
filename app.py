@@ -1,179 +1,151 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 import openai
-from datetime import datetime, date
 from supabase import create_client, Client
-from streamlit_extras.metric_cards import style_metric_cards
-from streamlit_extras.let_it_rain import rain
-from streamlit_extras.app_logo import add_logo
-import plotly.express as px
-import plotly.graph_objects as go
-import calendar
 
-# --- CONFIG ---
-st.set_page_config(page_title="DaVinci's Duk", layout="wide")
-st.title("🧠 DaVinci's Duk – Sälj & Kundöversikt")
+# --- SETTINGS ---
+st.set_page_config(page_title="📈 DaVinci's Duk", layout="wide")
+st.title("📈 DaVinci's Duk – Försäljningssystem")
+st.markdown("💡 Fokusera på process, insikt och förbättring varje dag.")
 
-# --- SUPABASE ---
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# --- SUPABASE SETUP ---
+supabase_url = st.secrets["supabase"]["url"]
+supabase_key = st.secrets["supabase"]["key"]
+supabase: Client = create_client(supabase_url, supabase_key)
 
-# --- GPT ANALYS ---
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-GPT_MODEL = "gpt-4"
+# --- OPENAI SETUP ---
+openai.api_key = st.secrets["openai"]["api_key"]
+openai_model = st.secrets["openai"].get("model", "gpt-4")
 
-def gpt_analysera_affarer(affarer_df):
+# --- LAYOUT ---
+tabs = st.tabs(["📅 Dagslogg & Affärer", "⭐ Guldkunder", "🔁 Återkomster", "✅ Klara Kunder", "🎯 Mål"])
+
+# --- FUNCTIONS ---
+def fetch_table(table):
+    return supabase.table(table).select("*").execute().data
+
+def insert_row(table, data):
+    supabase.table(table).insert(data).execute()
+
+def update_row(table, match_column, match_value, data):
+    supabase.table(table).update(data).eq(match_column, match_value).execute()
+
+def delete_row(table, match_column, match_value):
+    supabase.table(table).delete().eq(match_column, match_value).execute()
+
+def gpt_analyze(affarer_df):
     if affarer_df.empty:
-        return "Inga affärer att analysera."
-    prompt = f"""
-    Här är dagens affärer:
+        return "Inga affärer att analysera idag."
+    prompt = f"Analysera följande affärer (i dataframe-format):\n{affarer_df.to_string(index=False)}\n\nVad fungerade bäst idag? Vad bör prioriteras imorgon? Ge även ett rekommenderat TB-mål och antal samtal."
+    response = openai.ChatCompletion.create(
+        model=openai_model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
 
-    {affarer_df.to_string(index=False)}
+# --- 1. DAGSLOGG & AFFÄRER ---
+with tabs[0]:
+    st.header("🗓️ Dagslogg")
+    datum = st.date_input("Datum", datetime.today())
+    samtal = st.number_input("Antal samtal", min_value=0, step=1)
+    tb_dag = st.number_input("TB (kr) för dagen", min_value=0.0, step=100.0)
+    energi = st.slider("Energi (1–5)", 1, 5, 3)
+    humor = st.slider("Humör (1–5)", 1, 5, 3)
 
-    Analysera vilka typer av affärer som varit mest lönsamma, eventuella mönster, vad som borde optimeras, och ge ett konkret förslag på samtalsmål och TB-mål för nästa dag.
-    """
-    try:
-        res = openai.ChatCompletion.create(
-            model=GPT_MODEL,
-            messages=[
-                {"role": "system", "content": "Du är en analytisk säljspecialist."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return res["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"Fel vid GPT-anrop: {e}"
+    if st.button("💾 Spara dagslogg"):
+        insert_row("logg", {
+            "datum": str(datum), "samtal": samtal,
+            "tb": tb_dag, "energi": energi, "humor": humor
+        })
+        st.success("Dagslogg sparad!")
 
-# --- DATAFETCH UT ---
-def fetch_data(tabell):
-    return supabase.table(tabell).select("*").execute().data
+    st.header("📤 Lägg till affär")
+    kol1, kol2 = st.columns(2)
+    with kol1:
+        foretagsnamn = st.text_input("Företagsnamn")
+        bolagstyp = st.selectbox("Bolagstyp", ["Enskild firma", "Aktiebolag"])
+        dealtyp = st.selectbox("Typ av affär", ["Nyteckning", "Förlängning"])
+        abonnemang = st.number_input("Antal abonnemang", min_value=0)
+        tb = st.number_input("TB för affären", min_value=0.0)
+        cashback = st.number_input("Cashback", min_value=0.0)
+    with kol2:
+        skickad = st.time_input("Skickad tid")
+        stangd = st.time_input("Stängd tid")
+        diff = (datetime.combine(datetime.today(), stangd) - datetime.combine(datetime.today(), skickad)).seconds / 60
+        modell = st.text_input("Modell på hårdvara")
+        typ = st.text_input("Typ av hårdvara")
+        antal = st.number_input("Antal hårdvaror", min_value=0)
+        inkopspris = st.number_input("Förhöjd avgift / inköpspris", min_value=0.0)
 
-def save_data(tabell, data):
-    supabase.table(tabell).insert(data).execute()
-
-# --- SIDOMENY ---
-flik = st.sidebar.selectbox("Navigera", [
-    "Dagslogg & Affärer",
-    "Guldkunder",
-    "Återkomster",
-    "Klara kunder",
-    "TB-mål per månad"
-])
-
-# --- GEMENSAM FILTER ---
-df_all = pd.DataFrame(fetch_data("affarer"))
-df_all["datum"] = pd.to_datetime(df_all["datum"], errors='coerce')
-
-# --- DAGLOGG & AFFÄRER ---
-if flik == "Dagslogg & Affärer":
-    with st.form("dagform"):
-        st.subheader("🗓️ Logga affär")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            datum = st.date_input("Datum", value=date.today())
-            kundnamn = st.text_input("Kundnamn")
-            foretagsnamn = st.text_input("Företagsnamn")
-            orgnr = st.text_input("Org-/Pers.nr")
-            abonnemang = st.number_input("Abonnemang sålda", step=1)
-        with col2:
-            tb = st.number_input("TB", step=100.0)
-            cashback = st.number_input("Cashback", step=100.0)
-            dealtyp = st.selectbox("Nyteckning / Förlängning", ["Nyteckning", "Förlängning"])
-            skickad = st.time_input("Skickad tid")
-            stangd = st.time_input("Stängd tid")
-        with col3:
-            hw_typ = st.text_input("Hårdvara typ")
-            hw_model = st.text_input("Hårdvara modell")
-            hw_pris = st.number_input("Inköpspris/förhöjd avgift", step=100.0)
-            hw_tb = st.number_input("TB från hårdvara", step=100.0)
-
-        if st.form_submit_button("💾 Spara affär"):
-            total_tb = tb + hw_tb
-            minut_diff = (datetime.combine(date.today(), stangd) - datetime.combine(date.today(), skickad)).seconds / 60
-            save_data("affarer", {
-                "datum": str(datum),
-                "kundnamn": kundnamn,
-                "foretagsnamn": foretagsnamn,
-                "orgnr": orgnr,
-                "abonnemang": abonnemang,
-                "tb": total_tb,
-                "cashback": cashback,
-                "dealtyp": dealtyp,
-                "skickad": str(skickad),
-                "stangd": str(stangd),
-                "minuter_till_stangning": minut_diff,
-                "hw_typ": hw_typ,
-                "hw_model": hw_model,
-                "hw_pris": hw_pris,
-                "hw_tb": hw_tb
-            })
-            st.success("Affär sparad!")
+    if st.button("➕ Lägg till affär"):
+        insert_row("affarer", {
+            "datum": str(datum), "foretagsnamn": foretagsnamn,
+            "bolagstyp": bolagstyp, "dealtyp": dealtyp, "abonnemang": abonnemang,
+            "tb": tb, "cashback": cashback, "minuter_till_stangning": diff,
+            "modell": modell, "typ": typ, "antal": antal, "inkopspris": inkopspris
+        })
+        st.success("Affär tillagd!")
 
     st.subheader("📊 Dagens affärer")
-    idag_df = df_all[df_all["datum"] == pd.to_datetime(date.today())]
-    st.dataframe(idag_df, use_container_width=True)
+    dagens_aff = supabase.table("affarer").select("*").eq("datum", str(datum)).execute().data
+    df_aff = pd.DataFrame(dagens_aff)
+    st.dataframe(df_aff)
 
-    st.subheader("🤖 GPT-analys")
-    analys = gpt_analysera_affarer(idag_df)
-    st.write(analys)
+    st.subheader("🧠 GPT-analys av dagens affärer")
+    if st.button("🔍 Kör analys"):
+        with st.spinner("Analyserar med GPT..."):
+            analys = gpt_analyze(pd.DataFrame(dagens_aff))
+            st.markdown(analys)
 
-# --- GULDKUNDER MFL ---
-def visa_flik(tabell_namn, rubrik):
-    st.subheader(f"📁 {rubrik}")
-    df = pd.DataFrame(fetch_data(tabell_namn))
-    if df.empty:
-        st.info("Inga kunder än.")
-        return
+# --- 2. GULDKUNDER / ÅTERKOMSTER / KLARA KUNDER ---
+def customer_tab(tab_index, table_name):
+    with tabs[tab_index]:
+        st.header(f"🗂️ {table_name.capitalize()}")
+        data = fetch_table(table_name)
+        df = pd.DataFrame(data)
+        search = st.text_input("🔍 Sök kund (namn, orgnr/personnr, företagsnamn)")
+        if search:
+            df = df[df.apply(lambda row: search.lower() in str(row.values).lower(), axis=1)]
+        st.dataframe(df, use_container_width=True)
 
-    df["datum"] = pd.to_datetime(df["datum"], errors='coerce')
+        st.markdown("---")
+        with st.expander("➕ Lägg till ny kund"):
+            namn = st.text_input("Namn")
+            org = st.text_input("Person-/Organisationsnummer")
+            foretag = st.text_input("Företagsnamn")
+            kommentar = st.text_area("Kommentar")
+            if st.button(f"Spara till {table_name}"):
+                insert_row(table_name, {
+                    "namn": namn,
+                    "orgnr": org,
+                    "foretagsnamn": foretag,
+                    "kommentar": kommentar,
+                    "datum": str(datetime.today().date())
+                })
+                st.success("Kund sparad!")
 
-    med1, med2 = st.columns([2,2])
-    with med1:
-        valdatum = st.date_input("Filtrera på datum")
-        df = df[df["datum"] == pd.to_datetime(valdatum)]
-    with med2:
-        sok = st.text_input("Sök på kund, företag eller org.nr")
-        if sok:
-            df = df[df.apply(lambda r: sok.lower() in str(r).lower(), axis=1)]
+customer_tab(1, "guldkunder")
+customer_tab(2, "aterkomster")
+customer_tab(3, "klarakunder")
 
-    st.dataframe(df, use_container_width=True)
+# --- 3. MÅLFUNKTION ---
+with tabs[4]:
+    st.header("🎯 TB-mål per månad")
+    month = st.selectbox("Välj månad", pd.date_range(start="2024-01-01", end="2025-12-01", freq="MS").strftime("%Y-%m"))
+    current = supabase.table("mal").select("*").eq("manad", month).execute().data
+    nuvarande_tb = current[0]["tb"] if current else 0
 
-if flik == "Guldkunder":
-    visa_flik("guldkunder", "Guldkunder")
-elif flik == "Återkomster":
-    visa_flik("aterkomster", "Återkomster")
-elif flik == "Klara kunder":
-    visa_flik("klarakunder", "Klara kunder")
-
-# --- TB-MÅL MÅNAD FÖR MÅNAD ---
-if flik == "TB-mål per månad":
-    st.subheader("🎯 Månadsmål & Progress")
-    current_month = datetime.today().strftime("%Y-%m")
-    all_logg = pd.DataFrame(fetch_data("affarer"))
-    all_logg["datum"] = pd.to_datetime(all_logg["datum"], errors='coerce')
-    all_logg["manad"] = all_logg["datum"].dt.strftime("%Y-%m")
-    tb_mtd = all_logg[all_logg["manad"] == current_month]["tb"].sum()
-
-    st.write(f"TB hittills denna månad ({current_month}): **{int(tb_mtd)} kr**")
-    mal_input = st.number_input("Sätt/uppdatera TB-mål för denna månad", step=1000.0)
-
+    nytt_tb = st.number_input("Sätt/ändra TB-mål (kr)", value=nuvarande_tb, step=1000)
     if st.button("💾 Spara mål"):
-        supabase.table("manadsmal").upsert({"manad": current_month, "tb_mal": mal_input}).execute()
-        st.success("Mål uppdaterat")
+        if current:
+            update_row("mal", "manad", month, {"tb": nytt_tb})
+        else:
+            insert_row("mal", {"manad": month, "tb": nytt_tb})
+        st.success("Mål uppdaterat!")
 
-    mal_df = pd.DataFrame(fetch_data("manadsmal"))
-    if current_month in mal_df["manad"].values:
-        mal = mal_df[mal_df["manad"] == current_month]["tb_mal"].iloc[0]
-        prog = min(tb_mtd / mal, 1.0) * 100
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=prog,
-            title={'text': "Uppnått % av målet"},
-            gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "green"}}
-        ))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Sätt ett mål först.")
+    dagloggar = pd.DataFrame(fetch_table("logg"))
+    dagloggar["datum"] = pd.to_datetime(dagloggar["datum"])
+    totalt = dagloggar[dagloggar["datum"].dt.strftime("%Y-%m") == month]["tb"].sum()
+    st.progress(min(1.0, totalt / nytt_tb))
+    st.write(f"Uppnått TB: {int(totalt)} kr / {int(nytt_tb)} kr")

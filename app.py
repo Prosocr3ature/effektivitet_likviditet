@@ -1,3 +1,5 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -14,13 +16,21 @@ from sklearn.preprocessing import StandardScaler
 st.set_page_config(page_title="DaVinci’s Duk", layout="wide")
 st.title("🎨 DaVinci’s Duk")
 st.markdown("💪 Fokusera på process, inte bara resultat.")
+
+# — API-Key —
 openai.api_key = st.secrets.get("OPENAI_KEY", "")
+if not openai.api_key:
+    st.error("❌ Saknar OpenAI-nyckel! Lägg till den i Streamlit Secrets.")
 
-# — DATABASE —
-conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
-c = conn.cursor()
+# — DATABASE — (cached init)
+@st.cache_resource
+def get_conn():
+    conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
+    return conn, conn.cursor()
 
-# Skapa tabeller
+conn, c = get_conn()
+
+# Skapa tabeller (första gången)
 c.execute("""CREATE TABLE IF NOT EXISTS logg (
     datum TEXT PRIMARY KEY,
     samtal INTEGER,
@@ -207,12 +217,14 @@ with tab3:
 
 # Tab4 – export
 with tab4:
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        pd.read_sql_query("SELECT * FROM logg", conn).to_excel(writer, sheet_name="Logg", index=False)
-        pd.read_sql_query("SELECT * FROM affarer", conn).to_excel(writer, sheet_name="Affärer", index=False)
-        pd.read_sql_query("SELECT * FROM mal", conn).to_excel(writer, sheet_name="Mål", index=False)
-        pd.read_sql_query("SELECT * FROM guldkunder", conn).to_excel(writer, sheet_name="Guldkunder", index=False)
-        pd.read_sql_query("SELECT * FROM aterkomster", conn).to_excel(writer, sheet_name="Återkomster", index=False)
-        pd.read_sql_query("SELECT * FROM klara_kunder", conn).to_excel(writer, sheet_name="Klara kunder", index=False)
-    st.download_button("📥 Ladda ner rapport", output.getvalue(), f"rapport_{idag}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.subheader("📥 Exportera rapport")
+    if st.button("📦 Skapa rapport"):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.read_sql_query("SELECT * FROM logg", conn).to_excel(writer, sheet_name="Logg", index=False)
+            pd.read_sql_query("SELECT * FROM affarer", conn).to_excel(writer, sheet_name="Affärer", index=False)
+            pd.read_sql_query("SELECT * FROM mal", conn).to_excel(writer, sheet_name="Mål", index=False)
+            pd.read_sql_query("SELECT * FROM guldkunder", conn).to_excel(writer, sheet_name="Guldkunder", index=False)
+            pd.read_sql_query("SELECT * FROM aterkomster", conn).to_excel(writer, sheet_name="Återkomster", index=False)
+            pd.read_sql_query("SELECT * FROM klara_kunder", conn).to_excel(writer, sheet_name="Klara kunder", index=False)
+        st.download_button("📥 Ladda ner rapport", output.getvalue(), f"rapport_{idag}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

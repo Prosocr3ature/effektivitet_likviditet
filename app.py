@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -16,21 +14,13 @@ from sklearn.preprocessing import StandardScaler
 st.set_page_config(page_title="DaVinci’s Duk", layout="wide")
 st.title("🎨 DaVinci’s Duk")
 st.markdown("💪 Fokusera på process, inte bara resultat.")
-
-# — API-Key —
 openai.api_key = st.secrets.get("OPENAI_KEY", "")
-if not openai.api_key:
-    st.error("❌ Saknar OpenAI-nyckel! Lägg till den i Streamlit Secrets.")
 
-# — DATABASE — (cached init)
-@st.cache_resource
-def get_conn():
-    conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
-    return conn, conn.cursor()
+# — DATABASE —
+conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
+c = conn.cursor()
 
-conn, c = get_conn()
-
-# Skapa tabeller (första gången)
+# Skapa tabeller
 c.execute("""CREATE TABLE IF NOT EXISTS logg (
     datum TEXT PRIMARY KEY,
     samtal INTEGER,
@@ -98,25 +88,25 @@ idag = datetime.today().date()
 
 with col1:
     st.subheader("🗓️ Dagslogg")
-    samtal = st.number_input("Samtal", 0, step=1)
-    tid_h = st.number_input("Tid (h)", 0, step=1)
-    tid_m = st.number_input("Tid (min)", 0, step=1)
+    samtal = st.number_input("Antal samtal (logg)", 0, step=1)
+    tid_h = st.number_input("Tid timmar (logg)", 0, step=1)
+    tid_m = st.number_input("Tid minuter (logg)", 0, step=1)
     tid_tot = tid_h * 60 + tid_m
-    tb = st.number_input("TB", 0.0, step=100.0)
-    energi = st.slider("Energi (1–5)", 1, 5, 3)
-    humor = st.slider("Humör (1–5)", 1, 5, 3)
+    tb = st.number_input("TB (logg)", 0.0, step=100.0)
+    energi = st.slider("Energi (1–5)", 1, 5, 3, key="energi_slider")
+    humor = st.slider("Humör (1–5)", 1, 5, 3, key="humor_slider")
 
     if st.button("💾 Spara dagslogg"):
         c.execute("""INSERT OR REPLACE INTO logg VALUES (?,?,?,?,?,?)""",
                   (idag.strftime("%Y-%m-%d"), samtal, tid_tot, tb, energi, humor))
         conn.commit()
-        st.success("Sparad!")
+        st.success("Dagslogg sparad!")
 
 with col2:
     st.subheader("🎯 Mål")
-    d_tb = st.number_input("TB-mål idag", 0.0, step=100.0)
-    d_calls = st.number_input("Samtalsmål idag", 0, step=1)
-    m_tb = st.number_input("Månads-TB-mål", 0.0, step=100.0)
+    d_tb = st.number_input("TB-mål idag (mål)", 0.0, step=100.0)
+    d_calls = st.number_input("Samtalsmål idag (mål)", 0, step=1)
+    m_tb = st.number_input("Månads-TB-mål (mål)", 0.0, step=100.0)
 
     if st.button("💾 Spara mål"):
         c.execute("""INSERT OR REPLACE INTO mal VALUES (?,?,?,?)""",
@@ -138,21 +128,21 @@ with col2:
 # — AFFÄRER MED HÅRDVARA —
 st.markdown("---")
 st.subheader("📤 Affärer + Hårdvara")
-skickad = st.time_input("Skickad tid")
-stangd = st.time_input("Stängd tid")
+skickad = st.time_input("Skickad tid (affär)")
+stangd = st.time_input("Stängd tid (affär)")
 bolagstyp = st.selectbox("Bolagstyp", ["Enskild firma", "Aktiebolag"])
-foretagsnamn = st.text_input("Företagsnamn")
-abonnemang = st.number_input("Abonnemang", 0, step=1)
-dealtyp = st.selectbox("Typ", ["Nyteckning", "Förlängning"])
-tb_affar = st.number_input("TB", 0.0, step=100.0)
-cashback = st.number_input("Cashback", 0.0, step=10.0)
+foretagsnamn = st.text_input("Företagsnamn (affär)")
+abonnemang = st.number_input("Antal abonnemang (affär)", 0, step=1)
+dealtyp = st.selectbox("Typ (affär)", ["Nyteckning", "Förlängning"])
+tb_affar = st.number_input("TB för affär (affär)", 0.0, step=100.0)
+cashback = st.number_input("Cashback (affär)", 0.0, step=10.0)
 margin = tb_affar - cashback
 minuter = (datetime.combine(idag, stangd) - datetime.combine(idag, skickad)).seconds / 60
-hw_count = st.number_input("Antal hårdvaror", 0, step=1)
-hw_type = st.text_input("Typ av hårdvara")
-hw_model = st.text_input("Modell")
-hw_cost = st.number_input("Inköpspris", 0.0, step=10.0)
-hw_tb = st.number_input("TB från hårdvara", 0.0, step=10.0)
+hw_count = st.number_input("Antal hårdvaror (affär)", 0, step=1)
+hw_type = st.text_input("Typ av hårdvara (affär)")
+hw_model = st.text_input("Modell (affär)")
+hw_cost = st.number_input("Inköpspris (affär)", 0.0, step=10.0)
+hw_tb = st.number_input("TB från hårdvara (affär)", 0.0, step=10.0)
 
 if st.button("➕ Lägg till affär"):
     c.execute("""INSERT INTO affarer
@@ -217,14 +207,12 @@ with tab3:
 
 # Tab4 – export
 with tab4:
-    st.subheader("📥 Exportera rapport")
-    if st.button("📦 Skapa rapport"):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            pd.read_sql_query("SELECT * FROM logg", conn).to_excel(writer, sheet_name="Logg", index=False)
-            pd.read_sql_query("SELECT * FROM affarer", conn).to_excel(writer, sheet_name="Affärer", index=False)
-            pd.read_sql_query("SELECT * FROM mal", conn).to_excel(writer, sheet_name="Mål", index=False)
-            pd.read_sql_query("SELECT * FROM guldkunder", conn).to_excel(writer, sheet_name="Guldkunder", index=False)
-            pd.read_sql_query("SELECT * FROM aterkomster", conn).to_excel(writer, sheet_name="Återkomster", index=False)
-            pd.read_sql_query("SELECT * FROM klara_kunder", conn).to_excel(writer, sheet_name="Klara kunder", index=False)
-        st.download_button("📥 Ladda ner rapport", output.getvalue(), f"rapport_{idag}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.read_sql_query("SELECT * FROM logg", conn).to_excel(writer, sheet_name="Logg", index=False)
+        pd.read_sql_query("SELECT * FROM affarer", conn).to_excel(writer, sheet_name="Affärer", index=False)
+        pd.read_sql_query("SELECT * FROM mal", conn).to_excel(writer, sheet_name="Mål", index=False)
+        pd.read_sql_query("SELECT * FROM guldkunder", conn).to_excel(writer, sheet_name="Guldkunder", index=False)
+        pd.read_sql_query("SELECT * FROM aterkomster", conn).to_excel(writer, sheet_name="Återkomster", index=False)
+        pd.read_sql_query("SELECT * FROM klara_kunder", conn).to_excel(writer, sheet_name="Klara kunder", index=False)
+    st.download_button("📥 Ladda ner rapport", output.getvalue(), f"rapport_{idag}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

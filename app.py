@@ -100,12 +100,19 @@ with st.expander("📤 Lägg till affär"):
 
 # AI Analys
 if st.button("🤖 AI-Analys Dagsresultat"):
-    prompt=f"Samtal:{samtal},TB:{tb}. Ge tre säljtips."
+    prompt = f"Dagens försäljning: Antal samtal: {samtal}, TB: {tb}. Ge tre konkreta säljtips på svenska."
     try:
-        ai_res=openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role":"user","content":prompt}])
-        st.info(ai_res.choices[0].message.content)
+        client = openai.OpenAI(api_key=openai.api_key)
+        ai_res = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.7
+        )
+        tips = ai_res.choices[0].message.content
+        st.info(tips)
     except Exception as e:
-        st.error("AI-analys misslyckades: " + str(e))
+        st.error(f"AI-analys misslyckades: {e}") 
 
 # KUNDHANTERING (Excel-liknande)
 st.header("👥 Kundregister (Redigerbara Excel-liknande tabeller)")

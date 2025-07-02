@@ -4,139 +4,139 @@ import sqlite3
 from datetime import datetime, timedelta
 import io
 import numpy as np
-import matplotlib.pyplot as plt
 import openai
 
-# — SETTINGS —
+# Page settings
 st.set_page_config(page_title="🎨 DaVinci’s Duk", layout="wide")
 st.title("🎨 DaVinci’s Duk")
 st.markdown("💪 Fokusera på process, inte bara resultat.")
 
 openai.api_key = st.secrets.get("OPENAI_KEY", "")
 
-# — DATABASE —
+# Database
 conn = sqlite3.connect("forsaljning.db", check_same_thread=False)
 c = conn.cursor()
 
-# Tables
-c.execute("""CREATE TABLE IF NOT EXISTS logg (
-    datum TEXT PRIMARY KEY, start_tid TEXT, slut_tid TEXT, samtal INTEGER,
-    tb REAL, energi INTEGER, humor INTEGER)""")
-
-c.execute("""CREATE TABLE IF NOT EXISTS affarer (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datum TEXT, bolagstyp TEXT,
-    foretagsnamn TEXT, abonnemang INTEGER, dealtyp TEXT, tb REAL, cashback REAL,
-    margin REAL, hw_count INTEGER, hw_type TEXT, hw_model TEXT, hw_cost REAL, hw_tb REAL)""")
-
-c.execute("""CREATE TABLE IF NOT EXISTS mal (
-    datum TEXT PRIMARY KEY, daily_tb REAL, daily_calls INTEGER, monthly_tb REAL)""")
-
-for kund_tabell in ["guldkunder", "aterkomster", "klara_kunder"]:
-    c.execute(f"""CREATE TABLE IF NOT EXISTS {kund_tabell} (
+# Create tables
+tables = {
+    "logg": """CREATE TABLE IF NOT EXISTS logg (
+        datum TEXT PRIMARY KEY, start_tid TEXT, slut_tid TEXT, samtal INTEGER,
+        tb REAL, energi INTEGER, humor INTEGER)""",
+    "affarer": """CREATE TABLE IF NOT EXISTS affarer (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, datum TEXT, bolagstyp TEXT,
+        foretagsnamn TEXT, abonnemang INTEGER, dealtyp TEXT, tb REAL, cashback REAL,
+        margin REAL, hw_count INTEGER, hw_type TEXT, hw_model TEXT, hw_cost REAL, hw_tb REAL)""",
+    "mal": """CREATE TABLE IF NOT EXISTS mal (
+        datum TEXT PRIMARY KEY, daily_tb REAL, daily_calls INTEGER, monthly_tb REAL)""",
+    "guldkunder": """CREATE TABLE IF NOT EXISTS guldkunder (
         id INTEGER PRIMARY KEY AUTOINCREMENT, orgnummer TEXT, kontaktperson TEXT,
-        datum TEXT, detaljer TEXT, noteringar TEXT)""")
+        telefon TEXT, email TEXT, bindningstid TEXT, abonnemangsform TEXT, 
+        pris REAL, operatoer TEXT, noteringar TEXT)""",
+    "aterkomster": """CREATE TABLE IF NOT EXISTS aterkomster (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, orgnummer TEXT, kontaktperson TEXT,
+        datum TEXT, detaljer TEXT, noteringar TEXT)""",
+    "klara_kunder": """CREATE TABLE IF NOT EXISTS klara_kunder (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, orgnummer TEXT, kontaktperson TEXT,
+        datum TEXT, status TEXT, noteringar TEXT)"""
+}
+for t in tables.values():
+    c.execute(t)
 conn.commit()
 
-# — DAGLOGG —
-col1, col2 = st.columns([2,3])
-idag = datetime.today().date()
-
-with col1:
-    st.subheader("🗓️ Dagslogg")
-    start_tid = st.time_input("Starttid (logg)", value=datetime.strptime("09:00", "%H:%M").time())
-    slut_tid = st.time_input("Sluttid (logg)", value=datetime.strptime("17:00", "%H:%M").time())
-    samtal = st.number_input("Antal samtal", min_value=0)
-    tb = st.number_input("Dagens TB", min_value=0.0, step=100.0)
-    energi = st.slider("Energi (1–5)", 1, 5, 3)
-    humor = st.slider("Humör (1–5)", 1, 5, 3)
-
-    if st.button("💾 Spara dagslogg"):
-        c.execute("INSERT OR REPLACE INTO logg VALUES (?,?,?,?,?,?,?)",
-            (idag, start_tid.strftime("%H:%M"), slut_tid.strftime("%H:%M"),
-             samtal, tb, energi, humor))
-        conn.commit()
-        st.success("Dagslogg sparad!")
-
-with col2:
-    st.subheader("🎯 Mål")
-    daily_tb = st.number_input("Dagens TB-mål", min_value=0.0, step=100.0)
-    daily_calls = st.number_input("Dagens samtalsmål", min_value=0)
-    monthly_tb = st.number_input("Månads-TB-mål", min_value=0.0, step=100.0)
-
-    if st.button("💾 Spara mål"):
-        c.execute("INSERT OR REPLACE INTO mal VALUES (?,?,?,?)",
-            (idag, daily_tb, daily_calls, monthly_tb))
-        conn.commit()
-        st.success("Mål sparade!")
-
-# Progress bars
-logg = c.execute("SELECT samtal, tb FROM logg WHERE datum=?", (str(idag),)).fetchone()
-mal = c.execute("SELECT daily_tb, daily_calls, monthly_tb FROM mal WHERE datum=?", (str(idag),)).fetchone()
-
-if logg and mal:
-    st.write("**Dagsmål TB**"); st.progress(min(1, logg[1]/(mal[0] or 1)))
-    st.write("**Dagsmål samtal**"); st.progress(min(1, logg[0]/(mal[1] or 1)))
-
-    month_tb = c.execute("SELECT SUM(tb) FROM logg WHERE substr(datum,1,7)=?",
-                         (idag.strftime("%Y-%m"),)).fetchone()[0] or 0
-    st.write("**Månads-TB**"); st.progress(min(1, month_tb/(mal[2] or 1)))
-
-# — AFFÄRER —
-st.subheader("📤 Affärer + Hårdvara")
-with st.expander("Lägg till ny affär"):
+# DAGLIG LOGG
+with st.expander("🗓️ Dagslogg & mål"):
     cols = st.columns(4)
-    datum_affar = cols[0].date_input("Datum", idag)
-    bolagstyp = cols[1].selectbox("Bolagstyp", ["Enskild firma","Aktiebolag"])
-    foretagsnamn = cols[2].text_input("Företagsnamn")
-    abonnemang = cols[3].number_input("Abonnemang",0)
+    datum = cols[0].date_input("Datum", datetime.today())
+    start_tid = cols[1].time_input("Starttid", datetime.strptime("09:00", "%H:%M"))
+    slut_tid = cols[2].time_input("Sluttid", datetime.strptime("17:00", "%H:%M"))
+    samtal = cols[3].number_input("Antal samtal", 0)
 
     cols2 = st.columns(4)
-    dealtyp = cols2[0].selectbox("Typ",["Nyteckning","Förlängning"])
-    tb_affar = cols2[1].number_input("TB affär",0.0,step=100.0)
-    cashback = cols2[2].number_input("Cashback",0.0)
-    margin = tb_affar-cashback
+    tb = cols2[0].number_input("Dagens TB", 0.0, step=100.0)
+    energi = cols2[1].slider("Energi", 1, 5, 3)
+    humor = cols2[2].slider("Humör", 1, 5, 3)
 
-    hw_count = cols2[3].number_input("Antal HW",0)
+    # Mål
+    daily_tb = cols2[3].number_input("Dagens TB-mål", 0.0, step=100.0)
+    daily_calls = st.number_input("Dagens samtalsmål", 0)
+    monthly_tb = st.number_input("Månads-TB-mål", 0.0, step=100.0)
+
+    if st.button("💾 Spara Logg & Mål"):
+        c.execute("REPLACE INTO logg VALUES (?,?,?,?,?,?,?)",
+            (datum, start_tid.strftime("%H:%M"), slut_tid.strftime("%H:%M"),
+             samtal, tb, energi, humor))
+        c.execute("REPLACE INTO mal VALUES (?,?,?,?)",
+            (datum, daily_tb, daily_calls, monthly_tb))
+        conn.commit()
+        st.success("Logg och mål sparade!")
+
+# AFFÄRER MED HÅRDVARA
+with st.expander("📤 Lägg till affär"):
+    cols = st.columns(3)
+    aff_datum = cols[0].date_input("Affärsdatum", datetime.today(), key="aff_datum")
+    bolagstyp = cols[1].selectbox("Bolagstyp", ["Enskild firma", "Aktiebolag"])
+    foretagsnamn = cols[2].text_input("Företagsnamn")
+
+    abonnemang = st.number_input("Abonnemang", 0)
+    dealtyp = st.selectbox("Dealtyp", ["Nyteckning", "Förlängning"])
+    tb_affar = st.number_input("TB Affär", 0.0, step=100.0)
+    cashback = st.number_input("Cashback", 0.0, step=10.0)
+    margin = tb_affar - cashback
+
+    hw_count = st.number_input("Antal HW", 0)
     hw_type = st.text_input("HW Typ")
     hw_model = st.text_input("HW Modell")
-    hw_cost = st.number_input("HW Inköpspris")
-    hw_tb = st.number_input("HW TB")
+    hw_cost = st.number_input("HW Inköpspris", 0.0)
+    hw_tb = st.number_input("HW TB", 0.0)
 
-    if st.button("➕ Lägg till affär"):
-        c.execute("""INSERT INTO affarer (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,
-        tb,cashback,margin,hw_count,hw_type,hw_model,hw_cost,hw_tb) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (datum_affar,bolagstyp,foretagsnamn,abonnemang,dealtyp,tb_affar,cashback,margin,
-        hw_count,hw_type,hw_model,hw_cost,hw_tb))
+    if st.button("➕ Spara affär"):
+        c.execute("""INSERT INTO affarer 
+        (datum,bolagstyp,foretagsnamn,abonnemang,dealtyp,tb,cashback,margin,hw_count,hw_type,hw_model,hw_cost,hw_tb)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (aff_datum, bolagstyp, foretagsnamn, abonnemang, dealtyp, tb_affar, cashback,
+        margin, hw_count, hw_type, hw_model, hw_cost, hw_tb))
         conn.commit()
-        st.success("Affär sparad!")
+        st.success("Affär tillagd!")
 
-# — GPT ANALYS —
-st.subheader("🤖 AI Försäljningsanalys")
-if st.button("Generera AI-analys"):
-    prompt = f"Dagens TB={tb}, Samtal={samtal}. Ge 3 förbättringsförslag."
+# AI Analys
+if st.button("🤖 AI-Analys Dagsresultat"):
+    prompt=f"Samtal:{samtal},TB:{tb}. Ge tre säljtips."
     try:
-        response = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[
-            {"role":"user","content":prompt}])
-        st.write(response.choices[0].message.content)
+        ai_res=openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[{"role":"user","content":prompt}])
+        st.info(ai_res.choices[0].message.content)
     except Exception as e:
-        st.error("GPT misslyckades: " + str(e))
+        st.error("AI-analys misslyckades: " + str(e))
 
-# — EXPORT EXCEL —
-st.subheader("📥 Exportera data")
-if st.button("Exportera till Excel"):
+# KUNDHANTERING (Excel-liknande)
+st.header("👥 Kundregister (Redigerbara Excel-liknande tabeller)")
+kund_tabs = st.tabs(["Guldkunder", "Återkomster", "Klara kunder"])
+
+def editable_df(table, cols):
+    df = pd.read_sql(f"SELECT * FROM {table}", conn)
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+    if st.button(f"💾 Spara {table}"):
+        c.execute(f"DELETE FROM {table}")
+        for _, row in edited_df.iterrows():
+            vals = tuple(row[col] for col in cols)
+            c.execute(f"INSERT INTO {table} ({','.join(cols)}) VALUES({','.join('?'*len(cols))})", vals)
+        conn.commit()
+        st.success(f"{table} sparad!")
+
+with kund_tabs[0]:
+    editable_df("guldkunder", ["orgnummer", "kontaktperson", "telefon", "email", "bindningstid",
+                               "abonnemangsform", "pris", "operatoer", "noteringar"])
+with kund_tabs[1]:
+    editable_df("aterkomster", ["orgnummer","kontaktperson","datum","detaljer","noteringar"])
+with kund_tabs[2]:
+    editable_df("klara_kunder", ["orgnummer","kontaktperson","datum","status","noteringar"])
+
+# EXPORT EXCEL
+if st.button("📥 Exportera all data till Excel"):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for table in ["logg","affarer","mal","guldkunder","aterkomster","klara_kunder"]:
-            df=pd.read_sql_query(f"SELECT * FROM {table}",conn)
-            df.to_excel(writer, sheet_name=table, index=False)
+    with pd.ExcelWriter(output) as w:
+        for table in tables:
+            df = pd.read_sql(f"SELECT * FROM {table}", conn)
+            df.to_excel(w, sheet_name=table, index=False)
     st.download_button("Ladda ner Excel", output.getvalue(), "rapport.xlsx")
-
-# — KUNDHANTERING —
-st.subheader("👥 Kunder")
-kund_tabs = st.tabs(["Guldkunder","Återkomster","Klara kunder"])
-for i,tabell in enumerate(["guldkunder","aterkomster","klara_kunder"]):
-    with kund_tabs[i]:
-        df=pd.read_sql_query(f"SELECT * FROM {tabell}",conn)
-        st.dataframe(df)
 
 conn.close()
